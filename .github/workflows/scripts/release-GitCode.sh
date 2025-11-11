@@ -44,16 +44,6 @@ api_post() {
         "${API_BASE}${endpoint}"
 }
 
-api_put() {
-    local endpoint="$1"
-    local data="$2"
-    curl -s -X PUT \
-        -H "Content-Type: application/json" \
-        -H "PRIVATE-TOKEN: ${GITCODE_TOKEN}" \
-        -d "$data" \
-        "${API_BASE}${endpoint}"
-}
-
 api_delete() {
     local endpoint="$1"
     curl -s -o /dev/null -w "%{http_code}" -X DELETE \
@@ -61,55 +51,63 @@ api_delete() {
         "${API_BASE}${endpoint}"
 }
 
-upload_file_to_repo() {
+upload_file_to_release() {
     local file="$1"
     local filename=$(basename "$file")
-    local file_path="releases/${TAG_NAME}/${filename}"
     
     log_info "上传: $filename ($(du -h "$file" | cut -f1))"
     
-    local file_size=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file" 2>/dev/null || echo 0)
-    local file_size_mb=$((file_size / 1024 / 1024))
+    # 步骤1: 获取上传 URL 和 headers
+    log_debug "获取上传地址..."
     
-    if [ $file_size_mb -gt 100 ]; then
-        log_error "文件过大: $file_size_mb MB"
+    local upload_info=$(curl -s "${API_BASE}/repos/${REPO_PATH}/releases/${TAG_NAME}/upload_url?access_token=${GITCODE_TOKEN}&file_name=${filename}")
+    
+    if ! echo "$upload_info" | grep -q '"url"'; then
+        log_error "获取上传地址失败"
+        log_debug "响应: $upload_info"
         return 1
     fi
     
-    local content_base64=$(base64 -w 0 "$file" 2>/dev/null || base64 "$file")
+    # 解析 URL
+    local upload_url=$(echo "$upload_info" | jq -r '.url')
     
-    local existing=$(api_get "/repos/${REPO_PATH}/contents/${file_path}" 2>/dev/null || echo "")
-    
-    local response=""
-    if echo "$existing" | grep -q '"sha"'; then
-        local sha=""
-        if command -v jq &>/dev/null; then
-            sha=$(echo "$existing" | jq -r '.sha // empty')
-        else
-            sha=$(echo "$existing" | grep -o '"sha":"[^"]*"' | head -1 | cut -d'"' -f4)
-        fi
-        
-        response=$(api_put "/repos/${REPO_PATH}/contents/${file_path}" "{
-            \"message\":\"Update ${filename} for ${TAG_NAME}\",
-            \"content\":\"${content_base64}\",
-            \"sha\":\"${sha}\",
-            \"branch\":\"${BRANCH}\"
-        }")
-    else
-        response=$(api_post "/repos/${REPO_PATH}/contents/${file_path}" "{
-            \"message\":\"Add ${filename} for ${TAG_NAME}\",
-            \"content\":\"${content_base64}\",
-            \"branch\":\"${BRANCH}\"
-        }")
+    if [ -z "$upload_url" ]; then
+        log_error "无法解析上传 URL"
+        return 1
     fi
     
-    if echo "$response" | grep -q '"sha"'; then
+    log_debug "上传 URL: ${upload_url:0:60}..."
+    
+    # 步骤2: 解析并构建 headers
+    log_debug "解析请求头..."
+    
+    local project_id=$(echo "$upload_info" | jq -r '.headers."x-obs-meta-project-id" // empty')
+    local acl=$(echo "$upload_info" | jq -r '.headers."x-obs-acl" // empty')
+    local callback=$(echo "$upload_info" | jq -r '.headers."x-obs-callback" // empty')
+    local content_type=$(echo "$upload_info" | jq -r '.headers."Content-Type" // "application/octet-stream"')
+    
+    # 步骤3: 使用正确的 headers 上传文件
+    log_debug "执行上传..."
+    
+    local response=$(curl -s -w "\n%{http_code}" -X PUT \
+        -H "Content-Type: ${content_type}" \
+        -H "x-obs-meta-project-id: ${project_id}" \
+        -H "x-obs-acl: ${acl}" \
+        -H "x-obs-callback: ${callback}" \
+        --data-binary "@${file}" \
+        "$upload_url")
+    
+    local http_code=$(echo "$response" | tail -n1)
+    local body=$(echo "$response" | sed '$d')
+    
+    log_debug "HTTP Code: $http_code"
+    
+    if [ "$http_code" -eq 200 ] || echo "$body" | grep -q "success"; then
         log_success "上传成功"
-        # 正确的 GitCode raw 文件下载链接格式
-        echo "https://raw.gitcode.com/${REPO_PATH}/raw/${BRANCH}/${file_path}"
         return 0
     else
         log_error "上传失败"
+        log_debug "响应: $body"
         return 1
     fi
 }
@@ -241,74 +239,18 @@ cleanup_old_tags() {
     [ $deleted -gt 0 ] && log_info "已删除 $deleted 个旧标签" || log_info "没有需要删除的标签"
 }
 
-upload_files() {
-    echo ""
-    log_info "步骤 4/5: 上传文件到仓库"
-    
-    if [ -z "$UPLOAD_FILES" ]; then
-        log_info "没有文件需要上传"
-        return 0
-    fi
-    
-    local uploaded=0
-    local failed=0
-    FILE_LINKS=""
-    
-    IFS=' ' read -ra FILES <<< "$UPLOAD_FILES"
-    local total=${#FILES[@]}
-    
-    for file in "${FILES[@]}"; do
-        [ -z "$file" ] && continue
-        
-        if [ ! -f "$file" ]; then
-            log_warning "文件不存在: $file"
-            failed=$((failed + 1))
-            continue
-        fi
-        
-        local filename=$(basename "$file")
-        echo ""
-        log_info "[$(( uploaded + failed + 1 ))/${total}] $filename"
-        
-        if download_url=$(upload_file_to_repo "$file"); then
-            uploaded=$((uploaded + 1))
-            FILE_LINKS="${FILE_LINKS}- [📦 ${filename}](${download_url})
-"
-            log_debug "下载链接: $download_url"
-        else
-            failed=$((failed + 1))
-        fi
-    done
-    
-    echo ""
-    log_success "上传完成: $uploaded 成功, $failed 失败"
-}
-
 create_release() {
     echo ""
-    log_info "步骤 5/5: 创建 Release"
+    log_info "步骤 4/5: 创建 Release"
     log_info "标签: ${TAG_NAME}"
     log_info "标题: ${RELEASE_TITLE}"
     
-    # 构建完整的 Release 描述（包含文件链接）
-    local full_body="${RELEASE_BODY}"
+    local body_json=$(echo "$RELEASE_BODY" | jq -Rs .)
     
-    if [ -n "$FILE_LINKS" ]; then
-        full_body="${full_body}
-
-## 📥 下载文件
-
-${FILE_LINKS}
-> 💡 **提示**: 点击文件名即可下载"
-    fi
-    
-    # 转义为 JSON
-    local body_json=$(echo "$full_body" | jq -Rs .)
-    
-    # 先尝试删除已存在的 Release
+    # 先删除已存在的 Release
     api_delete "/repos/${REPO_PATH}/releases/tags/${TAG_NAME}" >/dev/null 2>&1 || true
     
-    # 创建新的 Release
+    # 创建 Release
     local response=$(api_post "/repos/${REPO_PATH}/releases" "{
         \"tag_name\":\"${TAG_NAME}\",
         \"name\":\"${RELEASE_TITLE}\",
@@ -325,6 +267,51 @@ ${FILE_LINKS}
     fi
 }
 
+upload_files() {
+    echo ""
+    log_info "步骤 5/5: 上传文件到 Release"
+    
+    if [ -z "$UPLOAD_FILES" ]; then
+        log_info "没有文件需要上传"
+        return 0
+    fi
+    
+    local uploaded=0
+    local failed=0
+    
+    IFS=' ' read -ra FILES <<< "$UPLOAD_FILES"
+    local total=${#FILES[@]}
+    
+    for file in "${FILES[@]}"; do
+        [ -z "$file" ] && continue
+        
+        if [ ! -f "$file" ]; then
+            log_warning "文件不存在: $file"
+            failed=$((failed + 1))
+            continue
+        fi
+        
+        echo ""
+        log_info "[$(( uploaded + failed + 1 ))/${total}] $(basename "$file")"
+        
+        if upload_file_to_release "$file"; then
+            uploaded=$((uploaded + 1))
+        else
+            failed=$((failed + 1))
+        fi
+    done
+    
+    echo ""
+    
+    if [ $uploaded -eq $total ]; then
+        log_success "全部上传成功: $uploaded/$total"
+    elif [ $uploaded -gt 0 ]; then
+        log_warning "部分上传成功: $uploaded/$total"
+    else
+        log_error "全部上传失败"
+    fi
+}
+
 verify_release() {
     echo ""
     log_info "验证 Release"
@@ -333,6 +320,11 @@ verify_release() {
     
     if echo "$response" | grep -q "\"tag_name\":\"${TAG_NAME}\""; then
         log_success "验证成功"
+        
+        if command -v jq &>/dev/null; then
+            local assets=$(echo "$response" | jq '.assets | length')
+            log_info "附件数量: $assets"
+        fi
     else
         log_error "验证失败"
         exit 1
@@ -353,8 +345,8 @@ main() {
     ensure_repository
     ensure_branch
     cleanup_old_tags
-    upload_files
     create_release
+    upload_files
     verify_release
     
     echo ""
@@ -364,9 +356,6 @@ main() {
     echo ""
     echo "Release 地址:"
     echo "  https://gitcode.com/${REPO_PATH}/releases"
-    echo ""
-    echo "文件目录:"
-    echo "  https://gitcode.com/${REPO_PATH}/tree/${BRANCH}/releases/${TAG_NAME}"
     echo ""
 }
 
