@@ -10,136 +10,118 @@ on:
         default: false
 
 jobs:
-  # ========================================
-  # 检查版本更新
-  # ========================================
- check-updates:
-  runs-on: ubuntu-latest
-  outputs:
-    matrix: ${{ steps.set-matrix.outputs.matrix }}
-    has_updates: ${{ steps.set-matrix.outputs.has_updates }}
-  
-  steps:
-    - name: 检出仓库
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 1
+  check-updates:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      has_updates: ${{ steps.set-matrix.outputs.has_updates }}
+    
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-    - name: 配置 version-manager.sh
-      run: chmod +x .github/workflows/scripts/version-manager.sh
+      - name: 配置 version-manager.sh
+        run: chmod +x .github/workflows/scripts/version-manager.sh
 
-    - name: 检查项目更新
-      id: check
-      run: |
-        # 项目配置（只有 openlist2）
-        PROJECTS='[
-          {
-            "github_owner": "sbwml",
-            "github_repo": "luci-app-openlist2",
-            "local_name": "openlist"
-          }
-        ]'
-        
-        UPDATES='[]'
-        
-        # 🔧 修复：使用进程替换而不是管道
-        while read -r project; do
-          github_owner=$(echo "$project" | jq -r '.github_owner')
-          github_repo=$(echo "$project" | jq -r '.github_repo')
-          local_name=$(echo "$project" | jq -r '.local_name')
+      - name: 检查项目更新
+        id: check
+        run: |
+          PROJECTS='[
+            {
+              "github_owner": "sbwml",
+              "github_repo": "luci-app-openlist2",
+              "local_name": "openlist"
+            }
+          ]'
           
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "检查: ${github_owner}/${github_repo} -> $local_name"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          UPDATES='[]'
           
-          # 获取上游最新版本
-          latest_tag=$(curl -s "https://api.github.com/repos/${github_owner}/${github_repo}/tags" | jq -r '.[0].name // empty')
-          
-          if [ -z "$latest_tag" ]; then
-            echo "⚠️  未找到上游版本，跳过"
-            continue
-          fi
-          
-          echo "上游版本: $latest_tag"
-          
-          # 获取本地记录的版本
-          local_version=$(.github/workflows/scripts/version-manager.sh read "$local_name" 2>/dev/null || echo "")
-          
-          if [ -z "$local_version" ]; then
-            echo "本地版本: 无记录"
-            echo "✅ 需要构建（新项目）"
-            needs_build="true"
-          elif [ "$local_version" != "$latest_tag" ]; then
-            echo "本地版本: $local_version"
-            echo "✅ 需要构建（版本不同）"
-            needs_build="true"
-          else
-            echo "本地版本: $local_version"
-            echo "ℹ️  版本相同，跳过"
-            needs_build="false"
-          fi
-          
-          # 强制构建
-          if [ "${{ inputs.force_build }}" = "true" ]; then
-            echo "🔄 强制构建模式"
-            needs_build="true"
-          fi
-          
-          if [ "$needs_build" = "true" ]; then
-            echo "📝 添加到构建列表"
-            UPDATES=$(echo "$UPDATES" | jq -c \
-              --arg owner "$github_owner" \
-              --arg repo "$github_repo" \
-              --arg name "$local_name" \
-              --arg version "$latest_tag" \
-              '. += [{
-                "github_owner": $owner,
-                "github_repo": $repo,
-                "local_name": $name,
-                "version": $version
-              }]')
+          while read -r project; do
+            github_owner=$(echo "$project" | jq -r '.github_owner')
+            github_repo=$(echo "$project" | jq -r '.github_repo')
+            local_name=$(echo "$project" | jq -r '.local_name')
             
-            # 调试：显示当前 UPDATES
-            echo "当前 UPDATES: $UPDATES"
-          fi
+            echo "检查: ${github_owner}/${github_repo} -> $local_name"
+            
+            latest_tag=$(curl -s "https://api.github.com/repos/${github_owner}/${github_repo}/tags" | jq -r '.[0].name // empty')
+            
+            if [ -z "$latest_tag" ]; then
+              echo "⚠️  未找到上游版本，跳过"
+              continue
+            fi
+            
+            echo "上游版本: $latest_tag"
+            
+            local_version=$(.github/workflows/scripts/version-manager.sh read "$local_name" 2>/dev/null || echo "")
+            
+            if [ -z "$local_version" ]; then
+              echo "本地版本: 无记录"
+              echo "✅ 需要构建（新项目）"
+              needs_build="true"
+            elif [ "$local_version" != "$latest_tag" ]; then
+              echo "本地版本: $local_version"
+              echo "✅ 需要构建（版本不同）"
+              needs_build="true"
+            else
+              echo "本地版本: $local_version"
+              echo "ℹ️  版本相同，跳过"
+              needs_build="false"
+            fi
+            
+            if [ "${{ inputs.force_build }}" = "true" ]; then
+              echo "🔄 强制构建模式"
+              needs_build="true"
+            fi
+            
+            if [ "$needs_build" = "true" ]; then
+              echo "📝 添加到构建列表"
+              UPDATES=$(echo "$UPDATES" | jq -c \
+                --arg owner "$github_owner" \
+                --arg repo "$github_repo" \
+                --arg name "$local_name" \
+                --arg version "$latest_tag" \
+                '. += [{
+                  "github_owner": $owner,
+                  "github_repo": $repo,
+                  "local_name": $name,
+                  "version": $version
+                }]')
+              
+              echo "当前 UPDATES: $UPDATES"
+            fi
+            
+            echo ""
+          done < <(echo "$PROJECTS" | jq -c '.[]')
           
+          echo "最终构建列表:"
+          echo "$UPDATES" | jq '.'
+          
+          echo "updates=$UPDATES" >> $GITHUB_OUTPUT
+
+      - name: 设置构建矩阵
+        id: set-matrix
+        run: |
+          UPDATES='${{ steps.check.outputs.updates }}'
+          
+          echo "接收到的 UPDATES:"
+          echo "$UPDATES"
           echo ""
-        done < <(echo "$PROJECTS" | jq -c '.[]')
-        
-        # 输出最终结果
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo "最终构建列表:"
-        echo "$UPDATES" | jq '.'
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        
-        # 输出到 GitHub Actions
-        echo "updates=$UPDATES" >> $GITHUB_OUTPUT
-
-    - name: 设置构建矩阵
-      id: set-matrix
-      run: |
-        UPDATES='${{ steps.check.outputs.updates }}'
-        
-        echo "接收到的 UPDATES:"
-        echo "$UPDATES"
-        echo ""
-        
-        if [ "$UPDATES" = "[]" ] || [ -z "$UPDATES" ] || [ "$UPDATES" = "null" ]; then
-          echo "has_updates=false" >> $GITHUB_OUTPUT
-          echo "matrix={\"include\":[]}" >> $GITHUB_OUTPUT
-          echo "::notice::没有需要构建的项目"
-        else
-          echo "has_updates=true" >> $GITHUB_OUTPUT
-          echo "matrix={\"include\":$UPDATES}" >> $GITHUB_OUTPUT
           
-          echo "需要构建的项目:"
-          echo "$UPDATES" | jq -r '.[] | "  - \(.local_name) (\(.version))"'
-        fi
+          if [ "$UPDATES" = "[]" ] || [ -z "$UPDATES" ] || [ "$UPDATES" = "null" ]; then
+            echo "has_updates=false" >> $GITHUB_OUTPUT
+            echo "matrix={\"include\":[]}" >> $GITHUB_OUTPUT
+            echo "::notice::没有需要构建的项目"
+          else
+            echo "has_updates=true" >> $GITHUB_OUTPUT
+            echo "matrix={\"include\":$UPDATES}" >> $GITHUB_OUTPUT
+            
+            echo "需要构建的项目:"
+            echo "$UPDATES" | jq -r '.[] | "  - \(.local_name) (\(.version))"'
+          fi
 
-  # ========================================
-  # 并行编译（保留所有架构）
-  # ========================================
- build:
+  build:
     name: ${{ matrix.project.local_name }}-${{ matrix.arch }}-${{ matrix.sdk }}
     runs-on: ubuntu-latest
     needs: check-updates
@@ -179,10 +161,8 @@ jobs:
       - name: 配置构建（openlist2 专用）
         run: |
           if [ -f "openlist2/Makefile" ]; then
-            # 静态链接
             sed -i '/golang-package/a \\tGO_PKG_DEFAULT_LDFLAGS:=-w -s -extldflags "-static"' openlist2/Makefile
             
-            # UPX 压缩（排除特定架构）
             if [[ "${{ matrix.arch }}" != loongarch64* ]] && \
                [[ "${{ matrix.arch }}" != mips64* ]] && \
                [[ "${{ matrix.arch }}" != riscv64* ]]; then
@@ -210,10 +190,7 @@ jobs:
           retention-days: 1
           if-no-files-found: warn
 
-  # ========================================
-  # 收集编译产物并发布
-  # ========================================
- release:
+  release:
     name: 发布 ${{ matrix.project.local_name }}
     runs-on: ubuntu-latest
     needs: [check-updates, build]
@@ -228,253 +205,100 @@ jobs:
       - name: 检出仓库
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
-      - name: 配置脚本权限
-        run: |
-          chmod +x .github/workflows/scripts/release-GitCode.sh
-          chmod +x .github/workflows/scripts/release-gitee.sh
-          chmod +x .github/workflows/scripts/version-manager.sh
+      - name: 配置 version-manager.sh
+        run: chmod +x .github/workflows/scripts/version-manager.sh
 
       - name: 下载所有编译产物
         uses: actions/download-artifact@v4
         with:
+          path: /tmp/artifacts-download
           pattern: ${{ matrix.project.local_name }}-*
-          path: artifacts
-          merge-multiple: false
+          merge-multiple: true
 
-      - name: 整理文件到 release-files 目录
+      - name: 整理发布文件
+        id: organize
         run: |
-         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-         echo "📦 整理编译文件: ${{ matrix.project.local_name }}"
-         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    
-         mkdir -p release-files
-    
-          IPK_COUNT=0
-          APK_COUNT=0
-    
-          for artifact_dir in artifacts/${{ matrix.project.local_name }}-*/; do
-            if [ ! -d "$artifact_dir" ]; then
-              continue
-            fi
-      
-            artifact_name=$(basename "$artifact_dir")
-      
-            # 从 artifact 名称提取架构信息
-            # 格式: openlist2-aarch64_cortex-a53-openwrt-24.10
-            arch=$(echo "$artifact_name" | sed 's/^${{ matrix.project.local_name }}-//' | sed 's/-openwrt-24.10$//' | sed 's/-SNAPSHOT$//')
-      
-            echo "处理: $artifact_name (架构: $arch)"
-      
-            # ============ 处理 IPK 文件 ============
-            while IFS= read -r file; do
-              if [ -f "$file" ]; then
-                filename=$(basename "$file")
+          PROJECT="${{ matrix.project.local_name }}"
+          VERSION="${{ matrix.project.version }}"
           
-                # _all.ipk 只复制一次
-                if [[ "$filename" == *"_all.ipk" ]]; then
-                  if [ -f "release-files/$filename" ]; then
-                    echo "  ⏭️  IPK (跳过): $filename"
-                  else
-                    cp "$file" release-files/
-                    echo "  ✅ IPK: $filename"
-                    IPK_COUNT=$((IPK_COUNT + 1))
-                  fi
-                else
-                  cp "$file" release-files/
-                  echo "  ✅ IPK: $filename"
-                  IPK_COUNT=$((IPK_COUNT + 1))
-                fi
-              fi
-            done < <(find "$artifact_dir" -type f -name "*.ipk" 2>/dev/null)
-      
-            # ============ 处理 APK 文件（加架构命名）============
-            while IFS= read -r file; do
-              if [ -f "$file" ]; then
-                original_filename=$(basename "$file")
+          RELEASE_DIR="/tmp/release-$PROJECT-$VERSION"
+          mkdir -p "$RELEASE_DIR"
           
-                # luci-app 和 luci-i18n 是架构无关的（_all）
-                if [[ "$original_filename" == luci-* ]]; then
-                  if [ -f "release-files/$original_filename" ]; then
-                    echo "  ⏭️  APK (跳过): $original_filename"
-                  else
-                    cp "$file" release-files/
-                    echo "  ✅ APK (通用): $original_filename"
-                    APK_COUNT=$((APK_COUNT + 1))
-                  fi
-                else
-                  # 🔧 修复：APK 文件也加架构命名
-                  base_name="${original_filename%.apk}"
-                  new_filename="${base_name}_${arch}.apk"
-            
-                  cp "$file" "release-files/$new_filename"
-                  echo "  ✅ APK: $new_filename"
-                  APK_COUNT=$((APK_COUNT + 1))
-                fi
-              fi
-            done < <(find "$artifact_dir" -type f -name "*.apk" 2>/dev/null)
-      
-            echo ""
-          done
-    
-          # 最终统计
-          FINAL_IPK=$(find release-files -type f -name "*.ipk" 2>/dev/null | wc -l)
-          FINAL_APK=$(find release-files -type f -name "*.apk" 2>/dev/null | wc -l)
-          TOTAL_FILES=$((FINAL_IPK + FINAL_APK))
-    
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "📊 文件统计"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "IPK: $FINAL_IPK 个"
-          echo "APK: $FINAL_APK 个"
-          echo "总计: $TOTAL_FILES 个"
-          echo ""
-    
-          echo "示例文件（前 20 个）:"
-          find release-files -type f | head -20 | xargs -r -I {} basename {}
-          echo ""
-
-      - name: 🚀 发布到 GitCode 和 Gitee
-        env:
-          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
-          GITCODE_USERNAME: ${{ secrets.GITCODE_USERNAME || 'whzhni' }}
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-          GITEE_USERNAME: ${{ secrets.GITEE_USERNAME || 'whzhni' }}
-          REPO_NAME: ${{ matrix.project.local_name }}
-          TAG_NAME: ${{ matrix.project.version }}
-          RELEASE_TITLE: "${{ matrix.project.local_name }} ${{ matrix.project.version }}"
-        run: |
-          # 🔧 修复问题3：动态生成构建时间
-          BUILD_TIME=$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S')
-    
-          # 生成 Release Body
-          RELEASE_BODY="## 📦 ${{ matrix.project.local_name }} ${{ matrix.project.version }}
-
-          ### 📌 项目信息
-          - 项目名称: ${{ matrix.project.github_repo }}
-          - 项目版本: ${{ matrix.project.version }}
-          - 上游仓库: https://github.com/${{ matrix.project.github_owner }}/${{ matrix.project.github_repo }}
-          - 上游地址: https://github.com/${{ matrix.project.github_owner }}/${{ matrix.project.github_repo }}/releases/tag/${{ matrix.project.version }}
-
-          ### 🔨 构建信息
-          - 构建时间: ${BUILD_TIME} (北京时间)
-          - 工作流运行: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          - SDK 版本: OpenWrt 24.10 + SNAPSHOT"
-    
-          # 生成文件列表
-          UPLOAD_FILES=$(find release-files -type f \( -name "*.ipk" -o -name "*.apk" \) | tr '\n' ' ')
-    
-          echo "准备发布"
-          echo "文件数量: $(echo $UPLOAD_FILES | wc -w)"
-          echo "构建时间: $BUILD_TIME"
-          echo ""
-    
-          # 第一步：发布到 GitCode
-          echo "🚀 发布到 GitCode"
-    
-          GITCODE_TOKEN="$GITCODE_TOKEN" \
-          USERNAME="$GITCODE_USERNAME" \
-          REPO_NAME="$REPO_NAME" \
-          TAG_NAME="$TAG_NAME" \
-          RELEASE_TITLE="$RELEASE_TITLE" \
-          RELEASE_BODY="$RELEASE_BODY" \
-          UPLOAD_FILES="$UPLOAD_FILES" \
-          .github/workflows/scripts/release-GitCode.sh
-    
-          GITCODE_STATUS=$?
+          echo "整理文件到: $RELEASE_DIR"
           
-          if [ $GITCODE_STATUS -eq 0 ]; then
-            echo "✅ GitCode 发布成功"
-          else
-            echo "❌ GitCode 发布失败"
-          fi
-          echo ""
-    
-          # 第二步：发布到 Gitee（等待 GitCode 完成后）
-      
-          echo "🚀 发布到 Gitee"
-          GITEE_TOKEN="$GITEE_TOKEN" \
-          USERNAME="$GITEE_USERNAME" \
-          REPO_NAME="$REPO_NAME" \
-          TAG_NAME="$TAG_NAME" \
-          RELEASE_TITLE="$RELEASE_TITLE" \
-          RELEASE_BODY="$RELEASE_BODY" \
-          UPLOAD_FILES="$UPLOAD_FILES" \
-          .github/workflows/scripts/release-gitee.sh
-    
-          GITEE_STATUS=$?
-    
-          if [ $GITEE_STATUS -eq 0 ]; then
-            echo "✅ Gitee 发布成功"
-          else
-            echo "❌ Gitee 发布失败"
-          fi
-    
-          echo ""
-          echo "📊 发布结果"
-          echo "GitCode: $([ $GITCODE_STATUS -eq 0 ] && echo '✅ 成功' || echo '❌ 失败')"
-          echo "Gitee:   $([ $GITEE_STATUS -eq 0 ] && echo '✅ 成功' || echo '❌ 失败')"
-    
-          # 如果两个都失败，退出码为1
-          if [ $GITCODE_STATUS -ne 0 ] && [ $GITEE_STATUS -ne 0 ]; then
-            echo "::error::两个平台都发布失败"
+          find /tmp/artifacts-download -type f \( -name "*.apk" -o -name "*.ipk" \) -exec mv {} "$RELEASE_DIR/" \;
+          
+          FILE_COUNT=$(ls -1 "$RELEASE_DIR" 2>/dev/null | wc -l)
+          echo "共整理 $FILE_COUNT 个文件"
+          
+          if [ $FILE_COUNT -eq 0 ]; then
+            echo "::error::未找到任何编译产物"
             exit 1
           fi
+          
+          ls -lh "$RELEASE_DIR"
+          
+          echo "release_dir=$RELEASE_DIR" >> $GITHUB_OUTPUT
+          echo "file_count=$FILE_COUNT" >> $GITHUB_OUTPUT
 
-      - name: 更新版本记录到 version.txt
+      - name: 发布到 GitHub Release
+        id: release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ matrix.project.local_name }}-${{ matrix.project.version }}
+          name: ${{ matrix.project.local_name }} ${{ matrix.project.version }}
+          body: |
+            ## 📦 ${{ matrix.project.local_name }} ${{ matrix.project.version }}
+            
+            **上游仓库**: [${{ matrix.project.github_owner }}/${{ matrix.project.github_repo }}](https://github.com/${{ matrix.project.github_owner }}/${{ matrix.project.github_repo }})
+            **编译时间**: ${{ env.BUILD_TIME }}
+            **文件数量**: ${{ steps.organize.outputs.file_count }}
+            
+            ### 📥 安装方法
+            ```bash
+            opkg install <package-file>.ipk
+            ```
+          files: ${{ steps.organize.outputs.release_dir }}/*
+          draft: false
+          prerelease: false
+          token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          BUILD_TIME: ${{ github.event.repository.updated_at }}
+
+      - name: 更新版本记录
+        if: success()
         run: |
-          # 写入版本记录
           .github/workflows/scripts/version-manager.sh write \
             "${{ matrix.project.local_name }}" \
             "${{ matrix.project.version }}"
           
-          # 提交到仓库
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-          git add version.txt
-          
-          if ! git diff --staged --quiet; then
-            git commit -m "📝 更新版本记录: ${{ matrix.project.local_name }} -> ${{ matrix.project.version }}"
-            git pull --rebase
-            git push
-          else
-            echo "ℹ️  版本记录无变化"
-          fi
+          git add versions.json
+          git diff-index --quiet HEAD || git commit -m "chore: 更新 ${{ matrix.project.local_name }} 到 ${{ matrix.project.version }}"
+          git push
 
-  # ========================================
-  # 生成报告
-  # ========================================
- report:
+  report:
+    name: 生成构建报告
     runs-on: ubuntu-latest
     needs: [check-updates, build, release]
-    if: always()
+    if: always() && needs.check-updates.outputs.has_updates == 'true'
     
     steps:
-      - name: 生成报告
+      - name: 生成摘要报告
         run: |
-          HAS_UPDATES="${{ needs.check-updates.outputs.has_updates }}"
-          BUILD_STATUS="${{ needs.build.result }}"
-          RELEASE_STATUS="${{ needs.release.result }}"
-          
           cat >> $GITHUB_STEP_SUMMARY << 'EOF'
-          # 📦 OpenWrt 软件包构建报告
+          # 🎯 构建报告
           
-          **触发时间**: $(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S') (北京时间)  
-          **强制构建**: ${{ inputs.force_build }}
-          
-          ---
-          
-          ## 📊 任务状态
+          ## 📊 执行状态
           
           | 阶段 | 状态 |
           |------|------|
-          | 版本检查 | $([ "$HAS_UPDATES" = "true" ] && echo "✅ 发现更新" || echo "ℹ️  无更新") |
-          | 软件包构建 | $([ "$BUILD_STATUS" = "success" ] && echo "✅ 成功" || [ "$BUILD_STATUS" = "skipped" ] && echo "⏭️ 跳过" || echo "❌ 失败") |
-          | 文件发布 | $([ "$RELEASE_STATUS" = "success" ] && echo "✅ 成功" || [ "$RELEASE_STATUS" = "skipped" ] && echo "⏭️ 跳过" || echo "❌ 失败") |
-          
-          ---
+          | 版本检查 | ${{ needs.check-updates.result == 'success' && '✅ 成功' || '❌ 失败' }} |
+          | 软件包构建 | ${{ needs.build.result == 'success' && '✅ 成功' || needs.build.result == 'skipped' && '⏭️ 跳过' || '❌ 失败' }} |
+          | 文件发布 | ${{ needs.release.result == 'success' && '✅ 成功' || needs.release.result == 'skipped' && '⏭️ 跳过' || '❌ 失败' }} |
           
           ## 📋 项目列表
           
@@ -482,19 +306,28 @@ jobs:
           ${{ needs.check-updates.outputs.matrix }}
           ```
           
+          ## ⚙️ 构建配置
+          
+          - **触发方式**: ${{ github.event_name == 'workflow_dispatch' && '手动触发' || '自动触发' }}
+          - **强制构建**: ${{ inputs.force_build == true && '是' || '否' }}
+          - **工作流**: `${{ github.workflow }}`
+          - **运行 ID**: `${{ github.run_id }}`
+          
           ---
           
-          ## 🔗 发布平台
-          
-          - 🌐 GitCode
-          - 🌐 Gitee
-          
+          *报告生成时间: ${{ github.event.repository.updated_at }}*
           EOF
-          
-          if [ "$HAS_UPDATES" = "true" ] && [ "$RELEASE_STATUS" = "success" ]; then
-            echo "::notice title=发布成功::软件包已成功发布到 GitCode 和 Gitee"
-          elif [ "$HAS_UPDATES" = "false" ]; then
-            echo "::notice title=无需更新::当前已是最新版本"
-          else
-            echo "::error title=发布失败::构建或发布过程出现错误"
-          fi
+
+  cleanup:
+    name: 清理临时文件
+    runs-on: ubuntu-latest
+    needs: [release]
+    if: always()
+    
+    steps:
+      - name: 删除临时 Artifacts
+        uses: geekyeggo/delete-artifact@v5
+        with:
+          name: |
+            openlist-*
+          failOnError: false
