@@ -1,0 +1,369 @@
+name: 测试 GitCode Release 发布
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: '发布标签名（例如：v1.0.0）'
+        required: true
+        default: 'v1.0.0'
+      release_title:
+        description: '发布标题'
+        required: false
+        default: ''
+      repo_name:
+        description: '仓库名称'
+        required: false
+        default: 'test-release'
+      delete_old_tags:
+        description: '是否删除旧标签'
+        required: false
+        type: boolean
+        default: true
+
+env:
+  USERNAME: whzhni
+  REPO_NAME: ${{ inputs.repo_name }}
+  TAG_NAME: ${{ inputs.tag_name }}
+
+jobs:
+  test-gitcode-release:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 准备测试文件
+        run: |
+          echo "========================================="
+          echo "📦 生成测试文件"
+          echo "========================================="
+          echo ""
+          
+          # 创建测试目录
+          mkdir -p release-files
+          
+          # 生成 README.md
+          cat > release-files/README.md << EOF
+          # ${{ env.REPO_NAME }}
+          
+          测试 GitCode Release 自动发布功能
+          
+          ## 发布信息
+          
+          - **版本**: ${{ env.TAG_NAME }}
+          - **时间**: $(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S')
+          - **触发者**: ${{ github.actor }}
+          - **工作流**: ${{ github.workflow }}
+          
+          ## 自动生成
+          
+          此 Release 由 GitHub Actions 自动创建
+          EOF
+          
+          # 生成版本信息文件
+          cat > release-files/version.txt << EOF
+          版本号: ${{ env.TAG_NAME }}
+          发布时间: $(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S')
+          仓库: ${{ env.USERNAME }}/${{ env.REPO_NAME }}
+          触发者: ${{ github.actor }}
+          工作流运行ID: ${{ github.run_id }}
+          EOF
+          
+          # 生成更新日志
+          cat > release-files/CHANGELOG.md << EOF
+          # 更新日志 ${{ env.TAG_NAME }}
+          
+          发布时间: $(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S')
+          
+          ## 新增功能
+          - ✨ 测试功能 A
+          - ✨ 测试功能 B
+          - ✨ 测试功能 C
+          
+          ## 问题修复
+          - 🐛 修复测试问题 1
+          - 🐛 修复测试问题 2
+          
+          ## 性能优化
+          - ⚡ 优化测试性能
+          - ⚡ 减少资源占用
+          
+          ## 其他
+          - 📝 更新文档
+          - 🎨 改进代码格式
+          EOF
+          
+          # 生成简单的配置文件
+          cat > release-files/config.json << EOF
+          {
+            "version": "${{ env.TAG_NAME }}",
+            "release_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "repository": "${{ env.USERNAME }}/${{ env.REPO_NAME }}",
+            "platform": "GitCode",
+            "build_number": ${{ github.run_number }},
+            "workflow_run_id": "${{ github.run_id }}"
+          }
+          EOF
+          
+          # 生成测试数据文件
+          cat > release-files/test-data.txt << EOF
+          这是一个测试数据文件
+          
+          包含的测试信息：
+          - 版本: ${{ env.TAG_NAME }}
+          - 时间: $(date)
+          - 随机数: $RANDOM
+          - UUID: $(cat /proc/sys/kernel/random/uuid)
+          
+          测试内容：
+          Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+          Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
+          Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.
+          EOF
+          
+          echo ""
+          echo "✅ 测试文件生成完成"
+          echo ""
+          echo "📁 文件列表："
+          ls -lh release-files/
+          echo ""
+          echo "📊 文件详情："
+          for file in release-files/*; do
+            if [ -f "$file" ]; then
+              echo ""
+              echo "📄 $(basename $file):"
+              echo "   大小: $(du -h "$file" | cut -f1)"
+              echo "   行数: $(wc -l < "$file")"
+              echo "   MD5: $(md5sum "$file" | cut -d' ' -f1)"
+            fi
+          done
+
+      - name: 显示文件内容预览
+        run: |
+          echo ""
+          echo "========================================="
+          echo "👀 文件内容预览"
+          echo "========================================="
+          echo ""
+          
+          for file in release-files/*; do
+            if [ -f "$file" ]; then
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              echo "📄 文件: $(basename $file)"
+              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              head -n 10 "$file"
+              lines=$(wc -l < "$file")
+              if [ $lines -gt 10 ]; then
+                echo "... (还有 $((lines - 10)) 行)"
+              fi
+              echo ""
+            fi
+          done
+
+      - name: 修改脚本配置
+        run: |
+          echo "========================================="
+          echo "⚙️  配置发布脚本"
+          echo "========================================="
+          echo ""
+          
+          SCRIPT_PATH=".github/workflows/scripts/release-GitCode.sh"
+          
+          # 备份原始脚本
+          cp "$SCRIPT_PATH" "${SCRIPT_PATH}.backup"
+          
+          # 动态修改脚本中的配置
+          sed -i "s/^REPO_NAME=.*/REPO_NAME=\"${{ env.REPO_NAME }}\"/" "$SCRIPT_PATH"
+          sed -i "s/^TAG_NAME=.*/TAG_NAME=\"${{ env.TAG_NAME }}\"/" "$SCRIPT_PATH"
+          
+          # 设置 Release 标题
+          RELEASE_TITLE="${{ inputs.release_title }}"
+          if [ -z "$RELEASE_TITLE" ]; then
+            RELEASE_TITLE="Release ${{ env.TAG_NAME }}"
+          fi
+          sed -i "s/^RELEASE_TITLE=.*/RELEASE_TITLE=\"${RELEASE_TITLE}\"/" "$SCRIPT_PATH"
+          
+          # 设置要上传的文件列表
+          UPLOAD_FILES="release-files/README.md release-files/version.txt release-files/CHANGELOG.md release-files/config.json release-files/test-data.txt"
+          sed -i "s|^UPLOAD_FILES=.*|UPLOAD_FILES=\"${UPLOAD_FILES}\"|" "$SCRIPT_PATH"
+          
+          # 设置 Release 描述
+          RELEASE_BODY="## 📦 Release ${{ env.TAG_NAME }}
+
+          发布时间: $(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S') (北京时间)
+
+          ### 📋 版本信息
+          - **版本号**: ${{ env.TAG_NAME }}
+          - **仓库**: ${{ env.USERNAME }}/${{ env.REPO_NAME }}
+          - **构建号**: #${{ github.run_number }}
+          - **工作流**: ${{ github.workflow }}
+
+          ### 🎯 本次更新
+          - ✨ 新增测试功能 A
+          - ✨ 新增测试功能 B  
+          - 🐛 修复测试问题
+          - ⚡ 性能优化
+
+          ### 📁 发布文件
+          - \`README.md\` - 项目说明
+          - \`version.txt\` - 版本信息
+          - \`CHANGELOG.md\` - 更新日志
+          - \`config.json\` - 配置文件
+          - \`test-data.txt\` - 测试数据
+
+          ---
+          🤖 此 Release 由 GitHub Actions 自动创建"
+          
+          # 使用 awk 替换多行内容
+          awk -v new="$RELEASE_BODY" '
+            /^RELEASE_BODY=/ {
+              print "RELEASE_BODY=\"" new "\""
+              in_var=1
+              next
+            }
+            in_var && /^[A-Z_]+=/ {
+              in_var=0
+            }
+            !in_var {
+              print
+            }
+          ' "$SCRIPT_PATH" > "${SCRIPT_PATH}.tmp"
+          mv "${SCRIPT_PATH}.tmp" "$SCRIPT_PATH"
+          
+          echo "✅ 脚本配置完成"
+          echo ""
+          echo "📝 当前配置："
+          echo "  仓库名: ${{ env.REPO_NAME }}"
+          echo "  标签名: ${{ env.TAG_NAME }}"
+          echo "  标题: ${RELEASE_TITLE}"
+          echo "  上传文件: $(echo $UPLOAD_FILES | wc -w) 个"
+
+      - name: 赋予脚本执行权限
+        run: |
+          chmod +x .github/workflows/scripts/release-GitCode.sh
+          echo "✅ 脚本权限已设置"
+
+      - name: 执行 GitCode Release 发布
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        run: |
+          echo ""
+          echo "========================================="
+          echo "🚀 开始执行 GitCode Release 发布"
+          echo "========================================="
+          echo ""
+          
+          # 检查 Token
+          if [ -z "$GITCODE_TOKEN" ]; then
+            echo "❌ GITCODE_TOKEN 未设置"
+            echo "请在仓库 Settings → Secrets 中添加 GITCODE_TOKEN"
+            exit 1
+          fi
+          
+          # 执行脚本
+          .github/workflows/scripts/release-GitCode.sh
+
+      - name: 生成发布报告
+        if: always()
+        run: |
+          echo ""
+          echo "========================================="
+          echo "📊 发布报告"
+          echo "========================================="
+          
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          # 📦 GitCode Release 测试报告
+          
+          **发布时间**: $(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S') (北京时间)  
+          **触发者**: ${{ github.actor }}  
+          **工作流运行**: #${{ github.run_number }}
+          
+          ---
+          
+          ## 📋 发布信息
+          
+          | 项目 | 内容 |
+          |------|------|
+          | 仓库 | ${{ env.USERNAME }}/${{ env.REPO_NAME }} |
+          | 标签 | \`${{ env.TAG_NAME }}\` |
+          | 标题 | ${{ inputs.release_title || env.TAG_NAME }} |
+          | 分支 | \`main\` |
+          
+          ---
+          
+          ## 📁 发布文件
+          
+          EOF
+          
+          for file in release-files/*; do
+            if [ -f "$file" ]; then
+              filename=$(basename "$file")
+              size=$(du -h "$file" | cut -f1)
+              lines=$(wc -l < "$file")
+              echo "- 📄 \`$filename\` ($size, $lines 行)" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+          
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          
+          ---
+          
+          ## 🔗 访问链接
+          
+          - 🌐 **GitCode 仓库**: https://gitcode.com/${{ env.USERNAME }}/${{ env.REPO_NAME }}
+          - 🏷️ **Release 页面**: https://gitcode.com/${{ env.USERNAME }}/${{ env.REPO_NAME }}/-/releases/${{ env.TAG_NAME }}
+          - 📋 **标签页面**: https://gitcode.com/${{ env.USERNAME }}/${{ env.REPO_NAME }}/-/tags/${{ env.TAG_NAME }}
+          
+          ---
+          
+          ## ⚙️ 配置说明
+          
+          如果发布失败，请检查：
+          
+          1. **Token 配置**: 确保在仓库 Settings → Secrets 中添加了 \`GITCODE_TOKEN\`
+          2. **Token 权限**: 确保 Token 有 \`api\`、\`write_repository\` 权限
+          3. **仓库名称**: 确保仓库名 \`${{ env.REPO_NAME }}\` 可用
+          4. **用户名**: 确保用户名 \`${{ env.USERNAME }}\` 正确
+          
+          ---
+          
+          ## 📖 测试说明
+          
+          本次测试执行了以下操作：
+          
+          1. ✅ 生成了 5 个测试文件
+          2. ✅ 配置了发布脚本参数
+          3. ✅ 执行了 GitCode Release 发布脚本
+          4. ✅ 自动检测并创建仓库（如果不存在）
+          5. ✅ 自动检测并创建 main 分支（如果不存在）
+          6. ✅ 删除旧标签（如果存在）
+          7. ✅ 创建新的 Release
+          8. ✅ 上传文件到 Release
+          
+          EOF
+
+      - name: 上传测试文件为工作流构件
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: release-files-${{ env.TAG_NAME }}
+          path: release-files/
+          retention-days: 7
+
+      - name: 清理
+        if: always()
+        run: |
+          echo ""
+          echo "========================================="
+          echo "🧹 清理临时文件"
+          echo "========================================="
+          
+          # 恢复脚本
+          if [ -f ".github/workflows/scripts/release-GitCode.sh.backup" ]; then
+            mv .github/workflows/scripts/release-GitCode.sh.backup .github/workflows/scripts/release-GitCode.sh
+            echo "✅ 脚本已恢复"
+          fi
+          
+          echo "✅ 清理完成"
