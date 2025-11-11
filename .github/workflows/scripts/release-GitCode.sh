@@ -86,8 +86,7 @@ api_delete() {
 
 api_upload() {
     local file="$1"
-    local release_id="$2"
-    local url="${API_BASE}/repos/${REPO_PATH}/releases/${release_id}/attach_files?access_token=${GITCODE_TOKEN}"
+    local url="${API_BASE}/repos/${REPO_PATH}/releases/${TAG_NAME}/attach_files?access_token=${GITCODE_TOKEN}"
     
     response=$(curl -s -w "\n%{http_code}" -X POST \
         -F "file=@${file}" \
@@ -249,15 +248,8 @@ cleanup_old_tags() {
         
         log_warning "删除标签: $tag"
         
-        # 获取 release
-        if rel_response=$(api_get "/repos/${REPO_PATH}/releases/tags/${tag}"); then
-            rel_id=$(echo "$rel_response" | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
-            
-            if [ -n "$rel_id" ]; then
-                api_delete "/repos/${REPO_PATH}/releases/${rel_id}" &>/dev/null
-                log_debug "删除 release: $rel_id"
-            fi
-        fi
+        # 删除 release（使用 tag_name）
+        api_delete "/repos/${REPO_PATH}/releases/${tag}" &>/dev/null
         
         # 删除标签
         api_delete "/repos/${REPO_PATH}/tags/${tag}" &>/dev/null
@@ -288,16 +280,15 @@ create_release() {
         exit 1
     fi
     
-    # 提取 ID
-    RELEASE_ID=$(echo "$response" | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
-    
-    if [ -z "$RELEASE_ID" ]; then
-        log_error "无法获取 Release ID"
+    # 检查是否创建成功（检查 tag_name 字段）
+    if echo "$response" | grep -q "\"tag_name\":\"${TAG_NAME}\""; then
+        log_success "Release 创建成功"
+        log_debug "使用 tag_name: ${TAG_NAME} 作为标识符"
+    else
+        log_error "Release 创建失败，响应异常"
         log_debug "响应: $response"
         exit 1
     fi
-    
-    log_success "Release 创建成功 (ID: ${RELEASE_ID})"
 }
 
 upload_files() {
@@ -307,11 +298,6 @@ upload_files() {
     if [ -z "$UPLOAD_FILES" ]; then
         log_info "没有文件需要上传"
         return 0
-    fi
-    
-    if [ -z "$RELEASE_ID" ]; then
-        log_error "RELEASE_ID 为空，无法上传文件"
-        return 1
     fi
     
     uploaded=0
@@ -333,7 +319,7 @@ upload_files() {
         filename=$(basename "$file")
         log_info "[$(( uploaded + failed + 1 ))/${total}] $filename ($size)"
         
-        if response=$(api_upload "$file" "$RELEASE_ID"); then
+        if response=$(api_upload "$file"); then
             if echo "$response" | grep -q '"name"'; then
                 log_success "上传成功"
                 uploaded=$((uploaded + 1))
@@ -357,7 +343,7 @@ verify_release() {
     
     if response=$(api_get "/repos/${REPO_PATH}/releases/tags/${TAG_NAME}"); then
         log_success "验证成功"
-        log_info "Release ID: ${RELEASE_ID}"
+        log_info "标签: ${TAG_NAME}"
         log_info "访问地址: https://gitcode.com/${REPO_PATH}/releases/tag/${TAG_NAME}"
     else
         log_error "验证失败"
