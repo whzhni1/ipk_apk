@@ -1,11 +1,7 @@
 name: Upload to GitCode Release
 
 on:
-  workflow_dispatch:   # 手动触发，方便测试
-  # 你也可以改成 push 标签自动触发：
-  # push:
-  #   tags:
-  #     - 'v*'
+  workflow_dispatch:
 
 jobs:
   release:
@@ -13,29 +9,37 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
 
       - name: Generate test file
         run: echo "Hello GitCode Release" > demo.txt
 
-      - name: Create Release (ignore if exists)
+      - name: Create or Get Release
         run: |
           TAG_NAME="v1.0.0"
-          echo "=== 尝试创建 Release ==="
-          curl -s -X POST https://api.gitcode.com/api/v5/repos/whzhni/test-release/releases \
+          RESPONSE=$(curl -s -X POST https://api.gitcode.com/api/v5/repos/whzhni/test-release/releases \
             -H "Content-Type: application/json" \
             -H "PRIVATE-TOKEN: ${{ secrets.GITCODE_TOKEN }}" \
             -d "{
               \"tag_name\": \"${TAG_NAME}\",
               \"name\": \"Release ${TAG_NAME}\",
               \"body\": \"自动创建的 Release\"
-            }" || true
+            }")
+
+          RELEASE_ID=$(echo $RESPONSE | jq -r '.id')
+
+          if [ "$RELEASE_ID" = "null" ]; then
+            RELEASE_ID=$(curl -s \
+              -H "PRIVATE-TOKEN: ${{ secrets.GITCODE_TOKEN }}" \
+              https://api.gitcode.com/api/v5/repos/whzhni/test-release/releases \
+              | jq -r ".[] | select(.tag_name==\"${TAG_NAME}\") | .id")
+          fi
+
+          echo "RELEASE_ID=$RELEASE_ID"
+          echo "RELEASE_ID=$RELEASE_ID" >> $GITHUB_ENV
 
       - name: Upload file to GitCode Release
         run: |
-          TAG_NAME="v1.0.0"
-          echo "=== 上传文件到 Release tag: $TAG_NAME ==="
-          curl -v -X POST https://api.gitcode.com/api/v5/repos/whzhni/test-release/releases/tags/$TAG_NAME/assets \
+          echo "Uploading to Release ID: $RELEASE_ID"
+          curl -X POST https://api.gitcode.com/api/v5/repos/whzhni/test-release/releases/$RELEASE_ID/attachments \
             -H "PRIVATE-TOKEN: ${{ secrets.GITCODE_TOKEN }}" \
             -F "file=@demo.txt"
