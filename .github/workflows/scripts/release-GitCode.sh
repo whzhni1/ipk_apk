@@ -82,6 +82,119 @@ api_delete() {
     [ "$http_code" -eq 204 ] || [ "$http_code" -eq 200 ] || [ "$http_code" -eq 404 ]
 }
 
+# 尝试多种上传方式
+try_upload_file() {
+    local file="$1"
+    local filename=$(basename "$file")
+    
+    log_info "尝试多种上传方式..."
+    
+    # 方式1: /repos/{owner}/{repo}/releases/{tag}/attach_files
+    log_debug "方式1: /repos/${REPO_PATH}/releases/${TAG_NAME}/attach_files"
+    local url1="${API_BASE}/repos/${REPO_PATH}/releases/${TAG_NAME}/attach_files?access_token=${GITCODE_TOKEN}"
+    response=$(curl -s -w "\n%{http_code}" -X POST -F "file=@${file}" "$url1")
+    http_code=$(echo "$response" | tail -n1)
+    body=$(echo "$response" | sed '$d')
+    log_debug "  HTTP $http_code: ${body:0:100}"
+    
+    if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 201 ]; then
+        log_success "方式1成功"
+        return 0
+    fi
+    
+    # 方式2: /repos/{owner}/{repo}/releases/tags/{tag}/attach_files
+    log_debug "方式2: /repos/${REPO_PATH}/releases/tags/${TAG_NAME}/attach_files"
+    local url2="${API_BASE}/repos/${REPO_PATH}/releases/tags/${TAG_NAME}/attach_files?access_token=${GITCODE_TOKEN}"
+    response=$(curl -s -w "\n%{http_code}" -X POST -F "file=@${file}" "$url2")
+    http_code=$(echo "$response" | tail -n1)
+    body=$(echo "$response" | sed '$d')
+    log_debug "  HTTP $http_code: ${body:0:100}"
+    
+    if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 201 ]; then
+        log_success "方式2成功"
+        return 0
+    fi
+    
+    # 方式3: /repos/{owner}/{repo}/uploads (通用上传)
+    log_debug "方式3: /repos/${REPO_PATH}/uploads"
+    local url3="${API_BASE}/repos/${REPO_PATH}/uploads?access_token=${GITCODE_TOKEN}"
+    response=$(curl -s -w "\n%{http_code}" -X POST -F "file=@${file}" "$url3")
+    http_code=$(echo "$response" | tail -n1)
+    body=$(echo "$response" | sed '$d')
+    log_debug "  HTTP $http_code: ${body:0:100}"
+    
+    if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 201 ]; then
+        log_success "方式3成功"
+        return 0
+    fi
+    
+    # 方式4: /repos/{owner}/{repo}/releases/{tag}/assets
+    log_debug "方式4: /repos/${REPO_PATH}/releases/${TAG_NAME}/assets"
+    local url4="${API_BASE}/repos/${REPO_PATH}/releases/${TAG_NAME}/assets?access_token=${GITCODE_TOKEN}&name=${filename}"
+    response=$(curl -s -w "\n%{http_code}" -X POST \
+        -H "Content-Type: application/octet-stream" \
+        --data-binary "@${file}" \
+        "$url4")
+    http_code=$(echo "$response" | tail -n1)
+    body=$(echo "$response" | sed '$d')
+    log_debug "  HTTP $http_code: ${body:0:100}"
+    
+    if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 201 ]; then
+        log_success "方式4成功"
+        return 0
+    fi
+    
+    # 方式5: /repos/{owner}/{repo}/contents/{path} (提交文件到仓库)
+    log_debug "方式5: /repos/${REPO_PATH}/contents/releases/${filename}"
+    local content_base64=$(base64 -w 0 "$file" 2>/dev/null || base64 "$file")
+    response=$(curl -s -w "\n%{http_code}" -X POST \
+        -H "Content-Type: application/json" \
+        -d "{\"message\":\"Upload ${filename}\",\"content\":\"${content_base64}\",\"branch\":\"${BRANCH}\"}" \
+        "${API_BASE}/repos/${REPO_PATH}/contents/releases/${filename}?access_token=${GITCODE_TOKEN}")
+    http_code=$(echo "$response" | tail -n1)
+    body=$(echo "$response" | sed '$d')
+    log_debug "  HTTP $http_code: ${body:0:100}"
+    
+    if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 201 ]; then
+        log_success "方式5成功（文件已提交到仓库）"
+        return 0
+    fi
+    
+    # 方式6: Gitee 兼容接口 /repos/{owner}/{repo}/releases/{id}/attach_files
+    log_debug "方式6: 获取Release ID后上传"
+    rel_response=$(api_get "/repos/${REPO_PATH}/releases/tags/${TAG_NAME}")
+    
+    # 尝试提取可能的 ID 字段
+    for id_field in "id" "release_id" "number"; do
+        local extracted_id=""
+        if command -v jq &> /dev/null; then
+            extracted_id=$(echo "$rel_response" | jq -r ".${id_field} // empty" 2>/dev/null || echo "")
+        fi
+        
+        if [ -z "$extracted_id" ]; then
+            extracted_id=$(echo "$rel_response" | grep -o "\"${id_field}\":[0-9]*" | head -1 | cut -d: -f2)
+        fi
+        
+        if [ -n "$extracted_id" ]; then
+            log_debug "  找到 ${id_field}: $extracted_id"
+            local url6="${API_BASE}/repos/${REPO_PATH}/releases/${extracted_id}/attach_files?access_token=${GITCODE_TOKEN}"
+            response=$(curl -s -w "\n%{http_code}" -X POST -F "file=@${file}" "$url6")
+            http_code=$(echo "$response" | tail -n1)
+            body=$(echo "$response" | sed '$d')
+            log_debug "  HTTP $http_code: ${body:0:100}"
+            
+            if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 201 ]; then
+                log_success "方式6成功（使用${id_field}=${extracted_id}）"
+                return 0
+            fi
+        fi
+    done
+    
+    # 所有方式都失败
+    log_error "所有上传方式均失败"
+    return 1
+}
+
 check_token() {
     echo ""
     log_info "检查环境配置"
@@ -245,26 +358,36 @@ upload_files() {
         return 0
     fi
     
-    log_warning "GitCode API v5 暂不支持通过 REST API 上传附件到 Release"
-    log_info "建议使用以下方式上传文件："
-    echo ""
-    echo "  方式 1: 手动上传"
-    echo "    访问: https://gitcode.com/${REPO_PATH}/releases"
-    echo "    编辑 Release 并上传文件"
-    echo ""
-    echo "  方式 2: 使用 Git LFS"
-    echo "    将大文件纳入 Git LFS 管理"
-    echo ""
-    echo "  方式 3: 使用 GitCode CLI"
-    echo "    pip install gitcode"
-    echo "    gitcode upload ..."
-    echo ""
+    uploaded=0
+    failed=0
     
-    log_info "需要上传的文件列表:"
     IFS=' ' read -ra FILES <<< "$UPLOAD_FILES"
+    total=${#FILES[@]}
+    
     for file in "${FILES[@]}"; do
-        [ -f "$file" ] && echo "  - $file ($(du -h "$file" | cut -f1))"
+        [ -z "$file" ] && continue
+        
+        if [ ! -f "$file" ]; then
+            log_warning "文件不存在: $file"
+            failed=$((failed + 1))
+            continue
+        fi
+        
+        size=$(du -h "$file" | cut -f1)
+        filename=$(basename "$file")
+        
+        echo ""
+        log_info "[$(( uploaded + failed + 1 ))/${total}] $filename ($size)"
+        
+        if try_upload_file "$file"; then
+            uploaded=$((uploaded + 1))
+        else
+            failed=$((failed + 1))
+        fi
     done
+    
+    echo ""
+    log_success "上传完成: ${uploaded} 成功, ${failed} 失败"
 }
 
 verify_release() {
