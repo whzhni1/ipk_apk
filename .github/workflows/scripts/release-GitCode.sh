@@ -13,6 +13,7 @@ RELEASE_TITLE="${RELEASE_TITLE:-Release ${TAG_NAME}}"
 RELEASE_BODY="${RELEASE_BODY:-Release ${TAG_NAME}}"
 BRANCH="${BRANCH:-main}"
 UPLOAD_FILES="${UPLOAD_FILES:-}"
+UPLOAD_METHOD="${UPLOAD_METHOD:-commit}"  # commit 或 skip
 
 # API 配置
 API_BASE="https://gitcode.com/api/v5"
@@ -32,7 +33,6 @@ log_warning() { echo -e "${YELLOW}[!]${NC} $*"; }
 log_error() { echo -e "${RED}[✗]${NC} $*"; }
 log_debug() { echo -e "${BLUE}[DEBUG]${NC} $*"; }
 
-# API v5 请求
 api_get() {
     local endpoint="$1"
     local url="${API_BASE}${endpoint}"
@@ -82,117 +82,48 @@ api_delete() {
     [ "$http_code" -eq 204 ] || [ "$http_code" -eq 200 ] || [ "$http_code" -eq 404 ]
 }
 
-# 尝试多种上传方式
-try_upload_file() {
+upload_file_to_repo() {
     local file="$1"
     local filename=$(basename "$file")
+    local path="releases/${TAG_NAME}/${filename}"
     
-    log_info "尝试多种上传方式..."
+    log_info "上传到仓库: $path"
     
-    # 方式1: /repos/{owner}/{repo}/releases/{tag}/attach_files
-    log_debug "方式1: /repos/${REPO_PATH}/releases/${TAG_NAME}/attach_files"
-    local url1="${API_BASE}/repos/${REPO_PATH}/releases/${TAG_NAME}/attach_files?access_token=${GITCODE_TOKEN}"
-    response=$(curl -s -w "\n%{http_code}" -X POST -F "file=@${file}" "$url1")
-    http_code=$(echo "$response" | tail -n1)
-    body=$(echo "$response" | sed '$d')
-    log_debug "  HTTP $http_code: ${body:0:100}"
-    
-    if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 201 ]; then
-        log_success "方式1成功"
-        return 0
-    fi
-    
-    # 方式2: /repos/{owner}/{repo}/releases/tags/{tag}/attach_files
-    log_debug "方式2: /repos/${REPO_PATH}/releases/tags/${TAG_NAME}/attach_files"
-    local url2="${API_BASE}/repos/${REPO_PATH}/releases/tags/${TAG_NAME}/attach_files?access_token=${GITCODE_TOKEN}"
-    response=$(curl -s -w "\n%{http_code}" -X POST -F "file=@${file}" "$url2")
-    http_code=$(echo "$response" | tail -n1)
-    body=$(echo "$response" | sed '$d')
-    log_debug "  HTTP $http_code: ${body:0:100}"
-    
-    if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 201 ]; then
-        log_success "方式2成功"
-        return 0
-    fi
-    
-    # 方式3: /repos/{owner}/{repo}/uploads (通用上传)
-    log_debug "方式3: /repos/${REPO_PATH}/uploads"
-    local url3="${API_BASE}/repos/${REPO_PATH}/uploads?access_token=${GITCODE_TOKEN}"
-    response=$(curl -s -w "\n%{http_code}" -X POST -F "file=@${file}" "$url3")
-    http_code=$(echo "$response" | tail -n1)
-    body=$(echo "$response" | sed '$d')
-    log_debug "  HTTP $http_code: ${body:0:100}"
-    
-    if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 201 ]; then
-        log_success "方式3成功"
-        return 0
-    fi
-    
-    # 方式4: /repos/{owner}/{repo}/releases/{tag}/assets
-    log_debug "方式4: /repos/${REPO_PATH}/releases/${TAG_NAME}/assets"
-    local url4="${API_BASE}/repos/${REPO_PATH}/releases/${TAG_NAME}/assets?access_token=${GITCODE_TOKEN}&name=${filename}"
-    response=$(curl -s -w "\n%{http_code}" -X POST \
-        -H "Content-Type: application/octet-stream" \
-        --data-binary "@${file}" \
-        "$url4")
-    http_code=$(echo "$response" | tail -n1)
-    body=$(echo "$response" | sed '$d')
-    log_debug "  HTTP $http_code: ${body:0:100}"
-    
-    if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 201 ]; then
-        log_success "方式4成功"
-        return 0
-    fi
-    
-    # 方式5: /repos/{owner}/{repo}/contents/{path} (提交文件到仓库)
-    log_debug "方式5: /repos/${REPO_PATH}/contents/releases/${filename}"
+    # Base64 编码
     local content_base64=$(base64 -w 0 "$file" 2>/dev/null || base64 "$file")
-    response=$(curl -s -w "\n%{http_code}" -X POST \
-        -H "Content-Type: application/json" \
-        -d "{\"message\":\"Upload ${filename}\",\"content\":\"${content_base64}\",\"branch\":\"${BRANCH}\"}" \
-        "${API_BASE}/repos/${REPO_PATH}/contents/releases/${filename}?access_token=${GITCODE_TOKEN}")
-    http_code=$(echo "$response" | tail -n1)
-    body=$(echo "$response" | sed '$d')
-    log_debug "  HTTP $http_code: ${body:0:100}"
     
-    if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 201 ]; then
-        log_success "方式5成功（文件已提交到仓库）"
-        return 0
+    # 检查文件是否已存在
+    existing=$(api_get "/repos/${REPO_PATH}/contents/${path}" 2>/dev/null || echo "")
+    
+    if echo "$existing" | grep -q '"sha"'; then
+        # 文件已存在，需要更新
+        local sha=$(echo "$existing" | grep -o '"sha":"[^"]*"' | head -1 | cut -d'"' -f4)
+        log_debug "文件已存在，SHA: $sha"
+        
+        response=$(curl -s -w "\n%{http_code}" -X PUT \
+            -H "Content-Type: application/json" \
+            -d "{\"message\":\"Update ${filename} for ${TAG_NAME}\",\"content\":\"${content_base64}\",\"sha\":\"${sha}\",\"branch\":\"${BRANCH}\"}" \
+            "${API_BASE}/repos/${REPO_PATH}/contents/${path}?access_token=${GITCODE_TOKEN}")
+    else
+        # 文件不存在，创建新文件
+        response=$(curl -s -w "\n%{http_code}" -X POST \
+            -H "Content-Type: application/json" \
+            -d "{\"message\":\"Add ${filename} for ${TAG_NAME}\",\"content\":\"${content_base64}\",\"branch\":\"${BRANCH}\"}" \
+            "${API_BASE}/repos/${REPO_PATH}/contents/${path}?access_token=${GITCODE_TOKEN}")
     fi
     
-    # 方式6: Gitee 兼容接口 /repos/{owner}/{repo}/releases/{id}/attach_files
-    log_debug "方式6: 获取Release ID后上传"
-    rel_response=$(api_get "/repos/${REPO_PATH}/releases/tags/${TAG_NAME}")
+    http_code=$(echo "$response" | tail -n1)
+    body=$(echo "$response" | sed '$d')
     
-    # 尝试提取可能的 ID 字段
-    for id_field in "id" "release_id" "number"; do
-        local extracted_id=""
-        if command -v jq &> /dev/null; then
-            extracted_id=$(echo "$rel_response" | jq -r ".${id_field} // empty" 2>/dev/null || echo "")
-        fi
-        
-        if [ -z "$extracted_id" ]; then
-            extracted_id=$(echo "$rel_response" | grep -o "\"${id_field}\":[0-9]*" | head -1 | cut -d: -f2)
-        fi
-        
-        if [ -n "$extracted_id" ]; then
-            log_debug "  找到 ${id_field}: $extracted_id"
-            local url6="${API_BASE}/repos/${REPO_PATH}/releases/${extracted_id}/attach_files?access_token=${GITCODE_TOKEN}"
-            response=$(curl -s -w "\n%{http_code}" -X POST -F "file=@${file}" "$url6")
-            http_code=$(echo "$response" | tail -n1)
-            body=$(echo "$response" | sed '$d')
-            log_debug "  HTTP $http_code: ${body:0:100}"
-            
-            if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 201 ]; then
-                log_success "方式6成功（使用${id_field}=${extracted_id}）"
-                return 0
-            fi
-        fi
-    done
-    
-    # 所有方式都失败
-    log_error "所有上传方式均失败"
-    return 1
+    if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 201 ]; then
+        log_success "上传成功"
+        FILE_URLS="${FILE_URLS}\n- [${filename}](https://gitcode.com/${REPO_PATH}/blob/${BRANCH}/${path})"
+        return 0
+    else
+        log_error "上传失败"
+        log_debug "HTTP $http_code: ${body:0:200}"
+        return 1
+    fi
 }
 
 check_token() {
@@ -201,7 +132,6 @@ check_token() {
     
     if [ -z "$GITCODE_TOKEN" ]; then
         log_error "GITCODE_TOKEN 未设置"
-        echo "请设置: export GITCODE_TOKEN='your_token'"
         exit 1
     fi
     
@@ -249,7 +179,6 @@ ensure_branch() {
     log_warning "分支不存在，创建中..."
     
     if [ -f ".git/shallow" ]; then
-        log_info "转换浅克隆为完整仓库..."
         git fetch --unshallow || { rm -rf .git; git init; }
     fi
     
@@ -259,13 +188,9 @@ ensure_branch() {
     git config user.email "bot@gitcode.com"
     
     if [ ! -f "README.md" ]; then
-        cat > README.md <<EOF
-# ${REPO_NAME}
-
-${REPO_DESC}
-
-创建时间: $(date '+%Y-%m-%d %H:%M:%S')
-EOF
+        echo "# ${REPO_NAME}" > README.md
+        echo "" >> README.md
+        echo "${REPO_DESC}" >> README.md
     fi
     
     git add -A
@@ -278,8 +203,6 @@ EOF
     else
         git remote add gitcode "$git_url"
     fi
-    
-    log_info "推送到远程仓库..."
     
     git push gitcode HEAD:refs/heads/${BRANCH} 2>&1 | sed "s/${GITCODE_TOKEN}/***TOKEN***/g" || {
         log_error "推送失败"
@@ -358,8 +281,17 @@ upload_files() {
         return 0
     fi
     
+    if [ "$UPLOAD_METHOD" = "skip" ]; then
+        log_warning "已跳过文件上传（UPLOAD_METHOD=skip）"
+        return 0
+    fi
+    
+    log_warning "GitCode API v5 不支持上传附件到 Release"
+    log_info "使用替代方案：将文件提交到仓库 releases/${TAG_NAME}/ 目录"
+    
     uploaded=0
     failed=0
+    FILE_URLS=""
     
     IFS=' ' read -ra FILES <<< "$UPLOAD_FILES"
     total=${#FILES[@]}
@@ -379,7 +311,7 @@ upload_files() {
         echo ""
         log_info "[$(( uploaded + failed + 1 ))/${total}] $filename ($size)"
         
-        if try_upload_file "$file"; then
+        if upload_file_to_repo "$file"; then
             uploaded=$((uploaded + 1))
         else
             failed=$((failed + 1))
@@ -388,6 +320,26 @@ upload_files() {
     
     echo ""
     log_success "上传完成: ${uploaded} 成功, ${failed} 失败"
+    
+    # 更新 Release 描述，添加文件链接
+    if [ $uploaded -gt 0 ] && [ -n "$FILE_URLS" ]; then
+        echo ""
+        log_info "更新 Release 描述，添加文件链接..."
+        
+        new_body="${RELEASE_BODY}\n\n## 📦 发布文件${FILE_URLS}"
+        new_body_escaped=$(echo -e "$new_body" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | awk '{printf "%s\\n", $0}' | sed 's/\\n$//')
+        
+        update_response=$(curl -s -X PATCH \
+            -H "Content-Type: application/json" \
+            -d "{\"body\": \"${new_body_escaped}\"}" \
+            "${API_BASE}/repos/${REPO_PATH}/releases/${TAG_NAME}?access_token=${GITCODE_TOKEN}")
+        
+        if echo "$update_response" | grep -q "\"tag_name\""; then
+            log_success "Release 描述已更新"
+        else
+            log_warning "Release 描述更新失败（文件已上传）"
+        fi
+    fi
 }
 
 verify_release() {
@@ -409,6 +361,7 @@ main() {
     echo "仓库: ${REPO_PATH}"
     echo "标签: ${TAG_NAME}"
     echo "分支: ${BRANCH}"
+    echo "上传方式: ${UPLOAD_METHOD}"
     
     check_token
     ensure_repository
