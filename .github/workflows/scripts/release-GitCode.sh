@@ -68,7 +68,6 @@ upload_file_to_repo() {
     
     log_info "上传: $filename ($(du -h "$file" | cut -f1))"
     
-    # 检查文件大小
     local file_size=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file" 2>/dev/null || echo 0)
     local file_size_mb=$((file_size / 1024 / 1024))
     
@@ -77,23 +76,18 @@ upload_file_to_repo() {
         return 1
     fi
     
-    # Base64 编码
     local content_base64=$(base64 -w 0 "$file" 2>/dev/null || base64 "$file")
     
-    # 检查文件是否已存在
     local existing=$(api_get "/repos/${REPO_PATH}/contents/${file_path}" 2>/dev/null || echo "")
     
     local response=""
     if echo "$existing" | grep -q '"sha"'; then
-        # 文件已存在，更新
         local sha=""
         if command -v jq &>/dev/null; then
             sha=$(echo "$existing" | jq -r '.sha // empty')
         else
             sha=$(echo "$existing" | grep -o '"sha":"[^"]*"' | head -1 | cut -d'"' -f4)
         fi
-        
-        log_debug "更新文件 (SHA: ${sha:0:8}...)"
         
         response=$(api_put "/repos/${REPO_PATH}/contents/${file_path}" "{
             \"message\":\"Update ${filename} for ${TAG_NAME}\",
@@ -102,9 +96,6 @@ upload_file_to_repo() {
             \"branch\":\"${BRANCH}\"
         }")
     else
-        # 文件不存在，创建
-        log_debug "创建新文件"
-        
         response=$(api_post "/repos/${REPO_PATH}/contents/${file_path}" "{
             \"message\":\"Add ${filename} for ${TAG_NAME}\",
             \"content\":\"${content_base64}\",
@@ -114,99 +105,11 @@ upload_file_to_repo() {
     
     if echo "$response" | grep -q '"sha"'; then
         log_success "上传成功"
-        # 返回原始下载链接
         echo "https://gitcode.com/${REPO_PATH}/raw/${BRANCH}/${file_path}"
         return 0
     else
         log_error "上传失败"
-        log_debug "响应: ${response:0:300}"
         return 1
-    fi
-}
-
-update_release_description() {
-    local file_links="$1"
-    
-    echo ""
-    log_info "更新 Release 描述..."
-    
-    # 获取 Release 信息以获得 ID
-    local rel_info=$(api_get "/repos/${REPO_PATH}/releases/tags/${TAG_NAME}")
-    
-    local rel_id=""
-    if command -v jq &>/dev/null; then
-        rel_id=$(echo "$rel_info" | jq -r '.id // empty')
-    else
-        rel_id=$(echo "$rel_info" | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
-    fi
-    
-    if [ -z "$rel_id" ]; then
-        log_error "无法获取 Release ID"
-        log_debug "响应: ${rel_info:0:200}"
-        return 1
-    fi
-    
-    log_debug "Release ID: $rel_id"
-    
-    # 构建新的描述
-    local new_body="${RELEASE_BODY}
-
-## 📥 下载文件
-
-${file_links}
-> 💡 **提示**: 点击文件名即可下载"
-    
-    # 使用 form-data 格式（官方文档要求）
-    local response=$(curl -s -X PATCH \
-        -H "PRIVATE-TOKEN: ${GITCODE_TOKEN}" \
-        -F "tag_name=${TAG_NAME}" \
-        -F "name=${RELEASE_TITLE}" \
-        -F "body=${new_body}" \
-        "${API_BASE}/repos/${REPO_PATH}/releases/${rel_id}")
-    
-    if echo "$response" | grep -q "\"tag_name\":\"${TAG_NAME}\""; then
-        log_success "Release 描述已更新"
-        return 0
-    fi
-    
-    # 如果 PATCH 失败，尝试用 JSON 格式的 PATCH
-    log_debug "尝试 JSON 格式..."
-    
-    local body_json=$(echo "$new_body" | jq -Rs .)
-    
-    response=$(curl -s -X PATCH \
-        -H "Content-Type: application/json" \
-        -H "PRIVATE-TOKEN: ${GITCODE_TOKEN}" \
-        -d "{\"tag_name\":\"${TAG_NAME}\",\"name\":\"${RELEASE_TITLE}\",\"body\":${body_json}}" \
-        "${API_BASE}/repos/${REPO_PATH}/releases/${rel_id}")
-    
-    if echo "$response" | grep -q "\"tag_name\":\"${TAG_NAME}\""; then
-        log_success "Release 描述已更新"
-        return 0
-    fi
-    
-    # 如果还是失败，尝试 PUT
-    log_debug "尝试 PUT 方法..."
-    
-    response=$(curl -s -X PUT \
-        -H "PRIVATE-TOKEN: ${GITCODE_TOKEN}" \
-        -F "tag_name=${TAG_NAME}" \
-        -F "name=${RELEASE_TITLE}" \
-        -F "body=${new_body}" \
-        "${API_BASE}/repos/${REPO_PATH}/releases/${rel_id}")
-    
-    if echo "$response" | grep -q "\"tag_name\":\"${TAG_NAME}\""; then
-        log_success "Release 描述已更新"
-    else
-        log_warning "描述更新失败"
-        log_debug "响应: ${response:0:300}"
-        echo ""
-        echo "请手动更新 Release 描述:"
-        echo "  https://gitcode.com/${REPO_PATH}/releases/edit/${TAG_NAME}"
-        echo ""
-        echo "添加以下内容:"
-        echo ""
-        echo "${file_links}"
     fi
 }
 
@@ -337,43 +240,9 @@ cleanup_old_tags() {
     [ $deleted -gt 0 ] && log_info "已删除 $deleted 个旧标签" || log_info "没有需要删除的标签"
 }
 
-create_release() {
-    echo ""
-    log_info "步骤 4/5: 创建 Release"
-    log_info "标签: ${TAG_NAME}"
-    log_info "标题: ${RELEASE_TITLE}"
-    
-    # 转义 body
-    local body_json=$(echo "$RELEASE_BODY" | jq -Rs .)
-    
-    # 尝试创建 Release
-    local response=$(api_post "/repos/${REPO_PATH}/releases" "{
-        \"tag_name\":\"${TAG_NAME}\",
-        \"name\":\"${RELEASE_TITLE}\",
-        \"body\":${body_json},
-        \"target_commitish\":\"${BRANCH}\"
-    }" 2>/dev/null || echo "")
-    
-    if echo "$response" | grep -q "\"tag_name\":\"${TAG_NAME}\""; then
-        log_success "Release 创建成功"
-    elif echo "$response" | grep -qi "already exists"; then
-        log_warning "Release 已存在"
-    else
-        # 检查是否真的存在
-        response=$(api_get "/repos/${REPO_PATH}/releases/tags/${TAG_NAME}")
-        
-        if echo "$response" | grep -q "\"tag_name\":\"${TAG_NAME}\""; then
-            log_warning "Release 已存在"
-        else
-            log_error "创建失败"
-            exit 1
-        fi
-    fi
-}
-
 upload_files() {
     echo ""
-    log_info "步骤 5/5: 上传文件并更新 Release"
+    log_info "步骤 4/5: 上传文件到仓库"
     
     if [ -z "$UPLOAD_FILES" ]; then
         log_info "没有文件需要上传"
@@ -382,13 +251,10 @@ upload_files() {
     
     local uploaded=0
     local failed=0
-    local file_links=""
+    FILE_LINKS=""
     
     IFS=' ' read -ra FILES <<< "$UPLOAD_FILES"
     local total=${#FILES[@]}
-    
-    echo ""
-    log_info "上传文件到仓库 releases/${TAG_NAME}/ 目录"
     
     for file in "${FILES[@]}"; do
         [ -z "$file" ] && continue
@@ -405,7 +271,7 @@ upload_files() {
         
         if download_url=$(upload_file_to_repo "$file"); then
             uploaded=$((uploaded + 1))
-            file_links="${file_links}- [📦 ${filename}](${download_url})
+            FILE_LINKS="${FILE_LINKS}- [📦 ${filename}](${download_url})
 "
         else
             failed=$((failed + 1))
@@ -414,10 +280,46 @@ upload_files() {
     
     echo ""
     log_success "上传完成: $uploaded 成功, $failed 失败"
+}
+
+create_release() {
+    echo ""
+    log_info "步骤 5/5: 创建 Release"
+    log_info "标签: ${TAG_NAME}"
+    log_info "标题: ${RELEASE_TITLE}"
     
-    # 更新 Release 描述
-    if [ $uploaded -gt 0 ] && [ -n "$file_links" ]; then
-        update_release_description "$file_links"
+    # 构建完整的 Release 描述（包含文件链接）
+    local full_body="${RELEASE_BODY}"
+    
+    if [ -n "$FILE_LINKS" ]; then
+        full_body="${full_body}
+
+## 📥 下载文件
+
+${FILE_LINKS}
+> 💡 **提示**: 点击文件名即可下载"
+    fi
+    
+    # 转义为 JSON
+    local body_json=$(echo "$full_body" | jq -Rs .)
+    
+    # 先尝试删除已存在的 Release
+    api_delete "/repos/${REPO_PATH}/releases/tags/${TAG_NAME}" >/dev/null 2>&1 || true
+    
+    # 创建新的 Release
+    local response=$(api_post "/repos/${REPO_PATH}/releases" "{
+        \"tag_name\":\"${TAG_NAME}\",
+        \"name\":\"${RELEASE_TITLE}\",
+        \"body\":${body_json},
+        \"target_commitish\":\"${BRANCH}\"
+    }")
+    
+    if echo "$response" | grep -q "\"tag_name\":\"${TAG_NAME}\""; then
+        log_success "Release 创建成功"
+    else
+        log_error "创建失败"
+        log_debug "响应: ${response:0:300}"
+        exit 1
     fi
 }
 
@@ -449,8 +351,8 @@ main() {
     ensure_repository
     ensure_branch
     cleanup_old_tags
-    create_release
-    upload_files
+    upload_files          # 先上传文件
+    create_release        # 再创建 Release（包含文件链接）
     verify_release
     
     echo ""
