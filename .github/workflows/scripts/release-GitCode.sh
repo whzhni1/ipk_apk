@@ -280,4 +280,18 @@ main() {
     echo "分支: ${BRANCH}"
     
     check_token
-    ens
+    ensure_repository
+    ensure_branch
+    cleanup_old_tags
+    create_release
+    upload_files
+    verify_release
+    
+    echo ""
+    log_success "🎉 发布完成"
+    echo ""
+    echo "访问: https://gitcode.com/${REPO_PATH}/releases/tag/${TAG_NAME}"
+    echo ""
+}
+
+main "$@"
