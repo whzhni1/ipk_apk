@@ -1,0 +1,35 @@
+name: Test Upload to GitCode Release
+
+on:
+  workflow_dispatch:   # 手动触发，方便测试
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Generate test file
+        run: echo "Hello GitCode Release" > demo.txt
+
+      - name: Create Release on GitCode
+        id: create_release
+        run: |
+          RESPONSE=$(curl -s -X POST https://api.gitcode.com/api/v5/repos/whzhni/test-release/releases \
+            -H "Content-Type: application/json" \
+            -d '{
+              "access_token": "'"${{ secrets.GITCODE_TOKEN }}"'",
+              "tag_name": "v1.0.0",
+              "name": "Release v1.0.0",
+              "body": "这是一个测试 Release"
+            }')
+          echo "$RESPONSE"
+          echo "RELEASE_ID=$(echo $RESPONSE | jq -r '.id')" >> $GITHUB_ENV
+
+      - name: Upload file to GitCode Release
+        run: |
+          curl -X POST https://api.gitcode.com/api/v5/repos/whzhni/test-release/releases/$RELEASE_ID/assets \
+            -H "Content-Type: multipart/form-data" \
+            -F "access_token=${{ secrets.GITCODE_TOKEN }}" \
+            -F "file=@demo.txt"
