@@ -13,7 +13,7 @@ RELEASE_BODY="${RELEASE_BODY:-Release ${TAG_NAME}}"
 BRANCH="${BRANCH:-main}"
 UPLOAD_FILES="${UPLOAD_FILES:-}"
 
-API_BASE="https://gitcode.com/api/v5"
+API_BASE="https://api.gitcode.com/api/v5"
 REPO_PATH="${USERNAME}/${REPO_NAME}"
 
 GREEN='\033[0;32m'
@@ -32,9 +32,11 @@ log_debug() { echo -e "${BLUE}[DEBUG]${NC} $*"; }
 api_get() {
     local endpoint="$1"
     local url="${API_BASE}${endpoint}"
-    [ "$url" == *"?"* ] && url="${url}&access_token=${GITCODE_TOKEN}" || url="${url}?access_token=${GITCODE_TOKEN}"
     
-    response=$(curl -s -w "\n%{http_code}" "$url")
+    response=$(curl -s -w "\n%{http_code}" \
+        -H "PRIVATE-TOKEN: ${GITCODE_TOKEN}" \
+        "$url")
+    
     http_code=$(echo "$response" | tail -n1)
     body=$(echo "$response" | sed '$d')
     
@@ -50,10 +52,10 @@ api_post() {
     local endpoint="$1"
     local data="$2"
     local url="${API_BASE}${endpoint}"
-    [ "$url" == *"?"* ] && url="${url}&access_token=${GITCODE_TOKEN}" || url="${url}?access_token=${GITCODE_TOKEN}"
     
     response=$(curl -s -w "\n%{http_code}" -X POST \
         -H "Content-Type: application/json" \
+        -H "PRIVATE-TOKEN: ${GITCODE_TOKEN}" \
         -d "$data" \
         "$url")
     
@@ -66,105 +68,50 @@ api_post() {
     fi
     
     echo "$body"
-}
-
-api_put() {
-    local endpoint="$1"
-    local data="$2"
-    local url="${API_BASE}${endpoint}"
-    [ "$url" == *"?"* ] && url="${url}&access_token=${GITCODE_TOKEN}" || url="${url}?access_token=${GITCODE_TOKEN}"
-    
-    response=$(curl -s -w "\n%{http_code}" -X PUT \
-        -H "Content-Type: application/json" \
-        -d "$data" \
-        "$url")
-    
-    http_code=$(echo "$response" | tail -n1)
-    body=$(echo "$response" | sed '$d')
-    
-    if [ "$http_code" -ge 400 ]; then
-        echo "$body"
-        return 1
-    fi
-    
-    echo "$body"
-}
-
-api_patch() {
-    local endpoint="$1"
-    local data="$2"
-    local url="${API_BASE}${endpoint}"
-    [ "$url" == *"?"* ] && url="${url}&access_token=${GITCODE_TOKEN}" || url="${url}?access_token=${GITCODE_TOKEN}"
-    
-    curl -s -X PATCH \
-        -H "Content-Type: application/json" \
-        -d "$data" \
-        "$url"
 }
 
 api_delete() {
     local endpoint="$1"
-    local url="${API_BASE}${endpoint}?access_token=${GITCODE_TOKEN}"
+    local url="${API_BASE}${endpoint}"
     
-    response=$(curl -s -w "\n%{http_code}" -X DELETE "$url")
+    response=$(curl -s -w "\n%{http_code}" -X DELETE \
+        -H "PRIVATE-TOKEN: ${GITCODE_TOKEN}" \
+        "$url")
+    
     http_code=$(echo "$response" | tail -n1)
     
     [ "$http_code" -eq 204 ] || [ "$http_code" -eq 200 ] || [ "$http_code" -eq 404 ]
 }
 
-upload_file_to_repo() {
+upload_file_to_release() {
     local file="$1"
     local filename=$(basename "$file")
-    local file_path="releases/${TAG_NAME}/${filename}"
     
     log_info "上传: $filename ($(du -h "$file" | cut -f1))"
     
-    # 检查文件大小（避免太大的文件）
-    local file_size=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file" 2>/dev/null || echo 0)
-    local file_size_mb=$((file_size / 1024 / 1024))
+    # 使用正确的 GitCode API 接口
+    local url="${API_BASE}/repos/${USERNAME}/${REPO_NAME}/releases/tags/${TAG_NAME}/assets"
     
-    if [ $file_size_mb -gt 100 ]; then
-        log_error "文件过大: $file_size_mb MB（建议小于100MB）"
+    log_debug "URL: $url"
+    
+    response=$(curl -s -w "\n%{http_code}" -X POST \
+        -H "PRIVATE-TOKEN: ${GITCODE_TOKEN}" \
+        -F "file=@${file}" \
+        "$url")
+    
+    http_code=$(echo "$response" | tail -n1)
+    body=$(echo "$response" | sed '$d')
+    
+    log_debug "HTTP Code: $http_code"
+    
+    if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 201 ]; then
+        log_success "上传成功"
+        return 0
+    else
+        log_error "上传失败 (HTTP $http_code)"
+        log_debug "响应: ${body:0:300}"
         return 1
     fi
-    
-    # Base64 编码文件内容
-    local content_base64=$(base64 -w 0 "$file" 2>/dev/null || base64 "$file")
-    
-    # 检查文件是否已存在
-    local existing=$(api_get "/repos/${REPO_PATH}/contents/${file_path}" 2>/dev/null || echo "")
-    
-    if echo "$existing" | grep -q '"sha"'; then
-        # 文件已存在，获取 SHA 并更新
-        local sha=""
-        if command -v jq &>/dev/null; then
-            sha=$(echo "$existing" | jq -r '.sha // empty')
-        else
-            sha=$(echo "$existing" | grep -o '"sha":"[^"]*"' | head -1 | cut -d'"' -f4)
-        fi
-        
-        log_debug "文件已存在，更新 (SHA: ${sha:0:8}...)"
-        
-        if ! api_put "/repos/${REPO_PATH}/contents/${file_path}" \
-            "{\"message\":\"Update ${filename} for ${TAG_NAME}\",\"content\":\"${content_base64}\",\"sha\":\"${sha}\",\"branch\":\"${BRANCH}\"}"; then
-            log_error "更新失败"
-            return 1
-        fi
-    else
-        # 文件不存在，创建新文件
-        log_debug "创建新文件"
-        
-        if ! api_post "/repos/${REPO_PATH}/contents/${file_path}" \
-            "{\"message\":\"Add ${filename} for ${TAG_NAME}\",\"content\":\"${content_base64}\",\"branch\":\"${BRANCH}\"}"; then
-            log_error "创建失败"
-            return 1
-        fi
-    fi
-    
-    log_success "上传成功"
-    
-    # 返回文件的下载链接
-    echo "https://gitcode.com/${REPO_PATH}/raw/${BRANCH}/${file_path}"
 }
 
 check_token() {
@@ -293,27 +240,33 @@ create_release() {
     
     local body_escaped=$(echo "$RELEASE_BODY" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g')
     
-    if ! response=$(api_post "/repos/${REPO_PATH}/releases" "{
+    # 先尝试创建，如果已存在则忽略错误
+    response=$(api_post "/repos/${REPO_PATH}/releases" "{
         \"tag_name\":\"${TAG_NAME}\",
         \"name\":\"${RELEASE_TITLE}\",
         \"body\":\"${body_escaped}\",
         \"target_commitish\":\"${BRANCH}\"
-    }"); then
-        log_error "创建失败"
-        exit 1
-    fi
+    }" 2>/dev/null || echo "")
     
     if echo "$response" | grep -q "\"tag_name\":\"${TAG_NAME}\""; then
         log_success "Release 创建成功"
+    elif echo "$response" | grep -q "already exists"; then
+        log_warning "Release 已存在"
     else
-        log_error "创建失败"
-        exit 1
+        # 验证 Release 是否真的存在
+        if api_get "/repos/${REPO_PATH}/releases/tags/${TAG_NAME}" >/dev/null 2>&1; then
+            log_warning "Release 已存在"
+        else
+            log_error "创建失败"
+            echo "$response"
+            exit 1
+        fi
     fi
 }
 
 upload_files() {
     echo ""
-    log_info "步骤 5/5: 上传文件并更新 Release"
+    log_info "步骤 5/5: 上传文件到 Release"
     
     if [ -z "$UPLOAD_FILES" ]; then
         log_info "没有文件需要上传"
@@ -322,13 +275,9 @@ upload_files() {
     
     local uploaded=0
     local failed=0
-    local file_links=""
     
     IFS=' ' read -ra FILES <<< "$UPLOAD_FILES"
     local total=${#FILES[@]}
-    
-    echo ""
-    log_info "上传文件到仓库..."
     
     for file in "${FILES[@]}"; do
         [ -z "$file" ] && continue
@@ -339,48 +288,24 @@ upload_files() {
             continue
         fi
         
-        local filename=$(basename "$file")
         echo ""
-        log_info "[$(( uploaded + failed + 1 ))/${total}] $filename"
+        log_info "[$(( uploaded + failed + 1 ))/${total}] $(basename "$file")"
         
-        if download_url=$(upload_file_to_repo "$file"); then
+        if upload_file_to_release "$file"; then
             uploaded=$((uploaded + 1))
-            file_links="${file_links}\n- [📦 ${filename}](${download_url})"
-            log_debug "下载链接: $download_url"
         else
             failed=$((failed + 1))
         fi
     done
     
     echo ""
-    log_success "上传完成: $uploaded 成功, $failed 失败"
     
-    # 更新 Release 描述
-    if [ $uploaded -gt 0 ] && [ -n "$file_links" ]; then
-        echo ""
-        log_info "更新 Release 描述..."
-        
-        # 获取 Release ID
-        local rel_info=$(api_get "/repos/${REPO_PATH}/releases/tags/${TAG_NAME}")
-        
-        local rel_id=""
-        if command -v jq &>/dev/null; then
-            rel_id=$(echo "$rel_info" | jq -r '.id // empty')
-        else
-            rel_id=$(echo "$rel_info" | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
-        fi
-        
-        if [ -n "$rel_id" ]; then
-            local new_body="${RELEASE_BODY}\n\n## 📥 下载文件${file_links}\n\n> 提示：点击文件名即可下载"
-            local new_body_escaped=$(echo -e "$new_body" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | awk '{printf "%s\\n", $0}' | sed 's/\\n$//')
-            
-            api_patch "/repos/${USERNAME}/${REPO_NAME}/releases/${rel_id}" \
-                "{\"tag_name\":\"${TAG_NAME}\",\"name\":\"${RELEASE_TITLE}\",\"body\":\"${new_body_escaped}\"}" >/dev/null
-            
-            log_success "Release 描述已更新"
-        else
-            log_warning "未获取到 Release ID，跳过描述更新"
-        fi
+    if [ $uploaded -eq $total ]; then
+        log_success "全部上传成功: $uploaded/$total"
+    elif [ $uploaded -gt 0 ]; then
+        log_warning "部分上传成功: $uploaded/$total"
+    else
+        log_error "全部上传失败"
     fi
 }
 
@@ -388,8 +313,13 @@ verify_release() {
     echo ""
     log_info "验证 Release"
     
-    if api_get "/repos/${REPO_PATH}/releases/tags/${TAG_NAME}" >/dev/null 2>&1; then
+    if response=$(api_get "/repos/${REPO_PATH}/releases/tags/${TAG_NAME}"); then
         log_success "验证成功"
+        
+        if command -v jq &>/dev/null; then
+            local assets=$(echo "$response" | jq '.assets | length')
+            log_info "附件数量: $assets"
+        fi
     else
         log_error "验证失败"
         exit 1
@@ -419,11 +349,7 @@ main() {
     log_success "🎉 发布完成"
     echo "═══════════════════════════════════════"
     echo ""
-    echo "访问 Release:"
-    echo "  https://gitcode.com/${REPO_PATH}/releases"
-    echo ""
-    echo "文件存储位置:"
-    echo "  https://gitcode.com/${REPO_PATH}/tree/${BRANCH}/releases/${TAG_NAME}"
+    echo "访问: https://gitcode.com/${REPO_PATH}/releases"
     echo ""
 }
 
