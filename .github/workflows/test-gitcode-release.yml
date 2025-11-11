@@ -1,33 +1,104 @@
-name: 测试 GitCode Release
+name: 测试 Release 发布
 
 on:
   workflow_dispatch:
     inputs:
+      platform:
+        description: '选择发布平台'
+        required: true
+        type: choice
+        options:
+          - GitCode
+          - Gitee
+        default: 'GitCode'
+      
       tag_name:
+        description: '版本标签'
+        required: true
         default: 'v1.0.0'
+      
       repo_name:
+        description: '仓库名称'
+        required: true
         default: 'test-release'
+      
+      username:
+        description: '用户名（留空使用默认）'
+        required: false
+        default: ''
 
 jobs:
-  test:
+  release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: 检出代码
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # 获取完整历史，避免 shallow clone
+          fetch-depth: 0
 
       - name: 生成测试文件
         run: |
           mkdir -p files
-          echo "# Test" > files/README.md
-          echo "v${{ inputs.tag_name }}" > files/version.txt
+          echo "# Test Release for ${{ inputs.platform }}" > files/README.md
+          echo "Version: ${{ inputs.tag_name }}" > files/version.txt
+          echo "Platform: ${{ inputs.platform }}" > files/platform.txt
+          date > files/build-time.txt
 
-      - name: 发布
+      - name: 显示配置信息
+        run: |
+          echo "==================== 发布配置 ===================="
+          echo "平台: ${{ inputs.platform }}"
+          echo "标签: ${{ inputs.tag_name }}"
+          echo "仓库: ${{ inputs.repo_name }}"
+          echo "用户: ${{ inputs.username || '(使用默认)' }}"
+          echo "================================================="
+
+      - name: 🚀 发布到 GitCode
+        if: inputs.platform == 'GitCode'
         env:
           GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          USERNAME: ${{ inputs.username || 'whzhni' }}
           REPO_NAME: ${{ inputs.repo_name }}
           TAG_NAME: ${{ inputs.tag_name }}
-          UPLOAD_FILES: "files/README.md files/version.txt"
+          RELEASE_TITLE: "Release ${{ inputs.tag_name }}"
+          RELEASE_BODY: |
+            ## 📦 自动发布测试
+            
+            - 版本: ${{ inputs.tag_name }}
+            - 平台: GitCode
+            - 构建时间: ${{ github.event.repository.updated_at }}
+            - 触发者: @${{ github.actor }}
+          UPLOAD_FILES: "files/README.md files/version.txt files/platform.txt files/build-time.txt"
         run: |
           chmod +x .github/workflows/scripts/release-GitCode.sh
           .github/workflows/scripts/release-GitCode.sh
+
+      - name: 🚀 发布到 Gitee
+        if: inputs.platform == 'Gitee'
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          USERNAME: ${{ inputs.username || secrets.GITEE_USERNAME }}
+          REPO_NAME: ${{ inputs.repo_name }}
+          TAG_NAME: ${{ inputs.tag_name }}
+          RELEASE_TITLE: "Release ${{ inputs.tag_name }}"
+          RELEASE_BODY: |
+            ## 📦 自动发布测试
+            
+            - 版本: ${{ inputs.tag_name }}
+            - 平台: Gitee
+            - 构建时间: ${{ github.event.repository.updated_at }}
+            - 触发者: @${{ github.actor }}
+          UPLOAD_FILES: "files/README.md files/version.txt files/platform.txt files/build-time.txt"
+        run: |
+          chmod +x .github/workflows/scripts/release-gitee.sh
+          .github/workflows/scripts/release-gitee.sh
+
+      - name: ✅ 发布完成
+        run: |
+          echo "::notice::🎉 成功发布到 ${{ inputs.platform }}"
+          
+          if [ "${{ inputs.platform }}" = "GitCode" ]; then
+            echo "::notice::🔗 https://gitcode.com/${{ inputs.username || 'whzhni' }}/${{ inputs.repo_name }}/releases"
+          else
+            echo "::notice::🔗 https://gitee.com/${{ inputs.username || secrets.GITEE_USERNAME }}/${{ inputs.repo_name }}/releases"
+          fi
