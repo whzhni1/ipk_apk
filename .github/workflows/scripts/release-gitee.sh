@@ -171,21 +171,62 @@ cleanup_old_tags() {
     echo ""
     log_info "步骤 3/5: 清理旧标签"
     
-    local response=$(api_get "/repos/${REPO_PATH}/tags")
+    # 获取所有 Release
+    local releases=$(api_get "/repos/${REPO_PATH}/releases")
     
-    if ! echo "$response" | jq -e '.[0]' > /dev/null 2>&1; then
+    if ! echo "$releases" | jq -e '.[0]' > /dev/null 2>&1; then
+        log_info "没有旧 Release"
+    else
+        log_debug "检查旧 Release..."
+        
+        local release_tags=$(echo "$releases" | jq -r '.[].tag_name' 2>/dev/null)
+        local deleted_releases=0
+        
+        while IFS= read -r tag; do
+            [ -z "$tag" ] || [ "$tag" = "$TAG_NAME" ] && continue
+            
+            if ! echo "$tag" | grep -qE '^(v[0-9]|[0-9])'; then
+                continue
+            fi
+            
+            log_warning "删除 Release: $tag"
+            
+            # 获取 Release ID
+            local release_id=$(echo "$releases" | jq -r --arg tag "$tag" '.[] | select(.tag_name == $tag) | .id')
+            
+            if [ -n "$release_id" ] && [ "$release_id" != "null" ]; then
+                local http_code=$(api_delete "/repos/${REPO_PATH}/releases/${release_id}")
+                
+                if [ "$http_code" -eq 204 ] || [ "$http_code" -eq 200 ]; then
+                    log_debug "  ✓ Release 已删除"
+                    deleted_releases=$((deleted_releases + 1))
+                    sleep 1
+                else
+                    log_debug "  ! Release 删除失败 (HTTP $http_code)"
+                fi
+            fi
+        done <<< "$release_tags"
+        
+        [ $deleted_releases -gt 0 ] && log_info "已删除 $deleted_releases 个 Release"
+    fi
+    
+    # 获取所有 Tag
+    local tags_response=$(api_get "/repos/${REPO_PATH}/tags")
+    
+    if ! echo "$tags_response" | jq -e '.[0]' > /dev/null 2>&1; then
         log_info "没有旧标签"
         return 0
     fi
     
-    local tags=$(echo "$response" | jq -r '.[].name' 2>/dev/null)
+    local tags=$(echo "$tags_response" | jq -r '.[].name' 2>/dev/null)
     
     if [ -z "$tags" ]; then
         log_info "没有旧标签"
         return 0
     fi
     
-    local deleted=0
+    local deleted_tags=0
+    
     while IFS= read -r tag; do
         [ -z "$tag" ] || [ "$tag" = "$TAG_NAME" ] && continue
         
@@ -193,18 +234,29 @@ cleanup_old_tags() {
             continue
         fi
         
-        log_warning "删除: $tag"
+        log_warning "删除 Tag: $tag"
         
-        local http_code=$(api_delete "/repos/${REPO_PATH}/tags/${tag}")
+        # Gitee 删除 Tag 的 API
+        local http_code=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+            "${API_BASE}/repos/${REPO_PATH}/tags/${tag}?access_token=${GITEE_TOKEN}")
         
-        if [ "$http_code" -eq 204 ] || [ "$http_code" -eq 200 ]; then
-            deleted=$((deleted + 1))
+        log_debug "  HTTP $http_code"
+        
+        if [ "$http_code" -eq 204 ] || [ "$http_code" -eq 200 ] || [ "$http_code" -eq 404 ]; then
+            deleted_tags=$((deleted_tags + 1))
+            log_debug "  ✓ Tag 已删除"
+        else
+            log_debug "  ! Tag 删除失败"
         fi
         
         sleep 1
     done <<< "$tags"
     
-    [ $deleted -gt 0 ] && log_info "已删除 $deleted 个旧标签" || log_info "没有需要删除的标签"
+    if [ $deleted_tags -gt 0 ]; then
+        log_success "已删除 $deleted_tags 个标签"
+    else
+        log_info "没有标签被删除"
+    fi
 }
 
 create_release() {
