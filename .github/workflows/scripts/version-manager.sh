@@ -22,9 +22,9 @@ usage() {
   $0 list                     列出所有项目
 
 示例:
-  $0 read tailscale           # 输出: v1.0.0
-  $0 write tailscale v1.0.1   # 写入或更新
-  $0 check tailscale          # 存在返回0，不存在返回1
+  $0 read openlist2           # 输出: v4.1.7
+  $0 write openlist2 v4.1.8   # 写入或更新
+  $0 check openlist2          # 存在返回0，不存在返回1
   $0 list                     # 列出所有项目
 
 环境变量:
@@ -35,6 +35,14 @@ EOF
 
 # 确保文件存在
 ensure_file() {
+    local dir=$(dirname "$VERSION_FILE")
+    
+    # 确保目录存在
+    if [ ! -d "$dir" ] && [ "$dir" != "." ]; then
+        mkdir -p "$dir"
+    fi
+    
+    # 确保文件存在
     if [ ! -f "$VERSION_FILE" ]; then
         echo -e "${YELLOW}创建版本文件: $VERSION_FILE${NC}" >&2
         touch "$VERSION_FILE"
@@ -78,14 +86,18 @@ write_version() {
     
     ensure_file
     
+    # 🔧 修复：使用临时文件确保操作原子性
+    local temp_file="${VERSION_FILE}.tmp"
+    
     # 检查是否已存在
     if grep -q "^${name}/" "$VERSION_FILE" 2>/dev/null; then
         # 更新现有记录
         if [[ "$OSTYPE" == "darwin"* ]]; then
-            sed -i '' "s|^${name}/.*|${name}/${version}|" "$VERSION_FILE"
+            sed "s|^${name}/.*|${name}/${version}|" "$VERSION_FILE" > "$temp_file"
         else
-            sed -i "s|^${name}/.*|${name}/${version}|" "$VERSION_FILE"
+            sed "s|^${name}/.*|${name}/${version}|" "$VERSION_FILE" > "$temp_file"
         fi
+        mv "$temp_file" "$VERSION_FILE"
         echo -e "${GREEN}✓${NC} 更新: ${name}/${version}" >&2
     else
         # 添加新记录
@@ -93,8 +105,14 @@ write_version() {
         echo -e "${GREEN}✓${NC} 添加: ${name}/${version}" >&2
     fi
     
-    # 排序（可选）
-    sort -o "$VERSION_FILE" "$VERSION_FILE"
+    # 排序并去重
+    if [ -s "$VERSION_FILE" ]; then
+        sort -u "$VERSION_FILE" > "$temp_file"
+        mv "$temp_file" "$VERSION_FILE"
+    fi
+    
+    # 清理可能的临时文件
+    rm -f "$temp_file"
 }
 
 # 检查是否存在
