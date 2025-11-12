@@ -16,6 +16,7 @@ UPLOAD_FILES="${UPLOAD_FILES:-}"
 API_BASE="https://api.gitcode.com/api/v5"
 REPO_PATH="${USERNAME}/${REPO_NAME}"
 
+PLATFORM_TAG="[GitCode]"
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
@@ -23,11 +24,11 @@ CYAN='\033[0;36m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-log_info() { echo -e "${CYAN}[INFO]${NC} $*"; }
-log_success() { echo -e "${GREEN}[✓]${NC} $*"; }
-log_warning() { echo -e "${YELLOW}[!]${NC} $*"; }
-log_error() { echo -e "${RED}[✗]${NC} $*"; }
-log_debug() { echo -e "${BLUE}[DEBUG]${NC} $*"; }
+log_info() { echo -e "${CYAN}${PLATFORM_TAG}[INFO]${NC} $*"; }
+log_success() { echo -e "${GREEN}${PLATFORM_TAG}[✓]${NC} $*"; }
+log_warning() { echo -e "${YELLOW}${PLATFORM_TAG}[!]${NC} $*"; }
+log_error() { echo -e "${RED}${PLATFORM_TAG}[✗]${NC} $*"; }
+log_debug() { echo -e "${BLUE}${PLATFORM_TAG}[DEBUG]${NC} $*"; }
 
 api_get() {
     local endpoint="$1"
@@ -155,7 +156,6 @@ ensure_repository() {
         # 等待仓库创建完成
         sleep 3
         
-        # 🔧 新增：创建初始文件
         log_info "初始化仓库..."
         
         # 优先使用 API 创建文件
@@ -177,7 +177,7 @@ ensure_repository() {
     fi
 }
 
-# ==================== 创建初始文件 ====================
+# 创建初始文件 
 create_initial_file() {
     log_info "创建初始文件..."
     
@@ -226,11 +226,11 @@ ${REPO_DESC}
     fi
 }
 
-# ==================== 使用 Git 创建初始提交 ====================
+# 使用 Git 创建初始提交 
 create_initial_commit_with_git() {
     log_debug "使用 Git 创建初始提交..."
     
-    # 🔧 使用独立的临时目录
+    # 使用独立的临时目录
     local temp_dir="${RUNNER_TEMP:-/tmp}/gitcode-init-$$-${RANDOM}"
     mkdir -p "$temp_dir"
     
@@ -257,7 +257,7 @@ EOF
     local git_url="https://oauth2:${GITCODE_TOKEN}@gitcode.com/${REPO_PATH}.git"
     git remote add origin "$git_url"
     
-    if git push -u origin main 2>&1 | sed "s/${GITCODE_TOKEN}/***TOKEN***/g"; then
+    if git push 2>&1 | sed "s/${GITCODE_TOKEN}/***TOKEN***/g"; then
         log_success "初始提交成功"
         cd "$current_dir"
         rm -rf "$temp_dir"
@@ -317,7 +317,7 @@ cleanup_old_tags() {
     
     local deleted_count=0
     
-    # 🔧 使用独立的临时目录
+    # 使用独立的临时目录
     local temp_git_dir="${RUNNER_TEMP:-/tmp}/gitcode-cleanup-$$-${RANDOM}"
     mkdir -p "$temp_git_dir"
     local current_dir=$(pwd)
@@ -374,7 +374,7 @@ cleanup_old_tags() {
         sleep 1
     done <<< "$tags"
     
-    # 🔧 返回原目录并清理
+    #  返回原目录并清理
     cd "$current_dir"
     rm -rf "$temp_git_dir"
     
@@ -473,14 +473,9 @@ verify_release() {
 }
 
 main() {
-    echo ""
-    echo "═══════════════════════════════════════"
     echo "  GitCode Release 发布脚本"
-    echo "═══════════════════════════════════════"
-    echo ""
     echo "仓库: ${REPO_PATH}"
     echo "标签: ${TAG_NAME}"
-    echo ""
     
     check_token
     ensure_repository
@@ -489,15 +484,10 @@ main() {
     create_release
     upload_files
     verify_release
-    
-    echo ""
-    echo "═══════════════════════════════════════"
+
     log_success "🎉 发布完成"
-    echo "═══════════════════════════════════════"
-    echo ""
     echo "Release 地址:"
     echo "  https://gitcode.com/${REPO_PATH}/releases"
-    echo ""
 }
 
 main "$@"
