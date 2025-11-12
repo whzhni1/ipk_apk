@@ -435,45 +435,85 @@ jobs:
         fi
 
     - name: 更新版本记录到 version.txt
-      run: |
-        
-        echo "📝 更新版本记录"
-        
-        
-        # 写入版本
-        .github/workflows/scripts/version-manager.sh write \
-          "${{ matrix.project.local_name }}" \
-          "${{ matrix.project.version }}"
-        
-        # 检查工作目录（确保只有 version.txt 被修改）
-        echo ""
-        echo "Git 状态:"
-        git status --short
-        
-        git config user.name "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
-        
-        # 只添加 version.txt
-        git add version.txt
-        
-        # 验证暂存区
-        STAGED=$(git diff --cached --name-only)
-        echo ""
-        echo "即将提交: $STAGED"
-        
-        if [ "$STAGED" != "version.txt" ]; then
-          echo "::error::检测到 version.txt 以外的文件被暂存！"
-          exit 1
-        fi
-        
-        if ! git diff --staged --quiet; then
-          git commit -m "📝 更新版本记录: ${{ matrix.project.local_name }} -> ${{ matrix.project.version }}"
-          git pull --rebase origin ${{ github.ref_name }} || true
-          git push origin ${{ github.ref_name }}
-          echo "✅ 版本记录已更新"
-        else
-          echo "ℹ️  版本记录无变化"
-        fi
+  run: |
+    
+    echo "📝 更新版本记录"
+    
+    
+    # 确保工作目录干净
+    cd "$GITHUB_WORKSPACE"
+    
+    # 确保 version.txt 存在（如果不存在会自动创建）
+    .github/workflows/scripts/version-manager.sh write \
+      "${{ matrix.project.local_name }}" \
+      "${{ matrix.project.version }}"
+    
+    echo ""
+    echo "当前版本记录:"
+    cat version.txt
+    
+    echo ""
+    echo "Git 状态检查..."
+    git status --short
+    
+    # 配置 Git
+    git config user.name "github-actions[bot]"
+    git config user.email "github-actions[bot]@users.noreply.github.com"
+    
+    # 🔧 修复：确保文件被追踪
+    if [ ! -f "version.txt" ]; then
+      echo "::error::version.txt 文件不存在"
+      exit 1
+    fi
+    
+    # 添加文件（即使之前未被追踪）
+    git add version.txt
+    
+    # 检查暂存区
+    STAGED=$(git diff --cached --name-only)
+    echo ""
+    echo "暂存的文件: ${STAGED:-无}"
+    
+    # 验证只有 version.txt
+    if [ -n "$STAGED" ] && [ "$STAGED" != "version.txt" ]; then
+      echo "::error::检测到 version.txt 以外的文件被暂存"
+      echo "暂存文件列表:"
+      echo "$STAGED"
+      exit 1
+    fi
+    
+    # 检查是否有变化
+    if git diff --cached --quiet; then
+      echo "ℹ️  版本记录无变化，跳过提交"
+    else
+      echo ""
+      echo "提交变更..."
+      
+      # 显示变更内容
+      echo "变更内容:"
+      git diff --cached
+      
+      # 提交
+      git commit -m "📝 更新版本: ${{ matrix.project.local_name }} → ${{ matrix.project.version }}"
+      
+      # 拉取最新代码（可能有其他 job 并行提交）
+      echo ""
+      echo "同步远程仓库..."
+      git pull --rebase origin ${{ github.ref_name }} || {
+        echo "::warning::拉取冲突，尝试强制推送"
+        git push --force-with-lease origin ${{ github.ref_name }}
+        exit 0
+      }
+      
+      # 推送
+      echo ""
+      echo "推送到远程..."
+      git push origin ${{ github.ref_name }}
+      
+      echo "✅ 版本记录已更新"
+    fi
+    
+    
         
  report:
   runs-on: ubuntu-latest
