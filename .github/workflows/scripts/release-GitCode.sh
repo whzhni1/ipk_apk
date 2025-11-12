@@ -151,10 +151,127 @@ ensure_repository() {
     
     if echo "$response" | grep -q '"id"'; then
         log_success "仓库创建成功"
-        sleep 5
+        
+        # 等待仓库创建完成
+        sleep 3
+        
+        # 🔧 新增：创建初始文件
+        log_info "初始化仓库..."
+        
+        # 优先使用 API 创建文件
+        if ! create_initial_file; then
+            # API 失败则使用 Git
+            if ! create_initial_commit_with_git; then
+                log_error "仓库初始化失败"
+                exit 1
+            fi
+        fi
+        
+        # 等待文件创建完成
+        sleep 2
+        
+        log_success "仓库初始化完成"
     else
         log_error "仓库创建失败"
         exit 1
+    fi
+}
+
+# ==================== 创建初始文件 ====================
+create_initial_file() {
+    log_info "创建初始文件..."
+    
+    # README 内容
+    local readme_content="# ${REPO_NAME}
+
+${REPO_DESC}
+
+## 📦 Release
+
+本仓库用于自动发布构建产物。
+
+## 🔗 链接
+
+- GitCode: https://gitcode.com/${REPO_PATH}
+"
+    
+    # Base64 编码
+    local encoded_content=$(echo -n "$readme_content" | base64 | tr -d '\n')
+    
+    # 创建文件的 JSON payload
+    local create_payload=$(jq -n \
+        --arg message "Initial commit" \
+        --arg content "$encoded_content" \
+        --arg branch "$BRANCH" \
+        '{
+            message: $message,
+            content: $content,
+            branch: $branch
+        }')
+    
+    # 使用 API 创建文件
+    local response=$(echo "$create_payload" | curl -s -X POST \
+        "${API_BASE}/repos/${REPO_PATH}/contents/README.md" \
+        -H "Content-Type: application/json" \
+        -H "PRIVATE-TOKEN: ${GITCODE_TOKEN}" \
+        -d @-)
+    
+    # 检查是否成功
+    if echo "$response" | jq -e '.content.sha' > /dev/null 2>&1; then
+        log_success "初始文件创建成功"
+        return 0
+    else
+        log_warning "初始文件创建失败，尝试 Git 方式..."
+        return 1
+    fi
+}
+
+# ==================== 使用 Git 创建初始提交 ====================
+create_initial_commit_with_git() {
+    log_debug "使用 Git 创建初始提交..."
+    
+    # 创建临时目录
+    local temp_dir=$(mktemp -d)
+    cd "$temp_dir"
+    
+    # 初始化 Git
+    git init -q
+    git config user.name "GitCode Bot"
+    git config user.email "bot@gitcode.com"
+    
+    # 创建 README
+    cat > README.md << EOF
+# ${REPO_NAME}
+
+${REPO_DESC}
+
+## 📦 Release
+
+本仓库用于自动发布构建产物。
+
+## 🔗 链接
+
+- GitCode: https://gitcode.com/${REPO_PATH}
+EOF
+    
+    # 提交
+    git add README.md
+    git commit -m "Initial commit" -q
+    
+    # 推送
+    local git_url="https://oauth2:${GITCODE_TOKEN}@gitcode.com/${REPO_PATH}.git"
+    git remote add origin "$git_url"
+    
+    if git push -u origin main 2>&1 | sed "s/${GITCODE_TOKEN}/***TOKEN***/g"; then
+        log_success "初始提交成功"
+        cd - > /dev/null
+        rm -rf "$temp_dir"
+        return 0
+    else
+        log_error "初始提交失败"
+        cd - > /dev/null
+        rm -rf "$temp_dir"
+        return 1
     fi
 }
 
