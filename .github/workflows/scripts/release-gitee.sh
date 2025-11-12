@@ -2,7 +2,7 @@
 
 set -e
 
-# ==================== 环境变量配置 ====================
+#  环境变量配置 
 GITEE_TOKEN="${GITEE_TOKEN:-}"
 USERNAME="${USERNAME:-}"
 REPO_NAME="${REPO_NAME:-}"
@@ -16,8 +16,7 @@ UPLOAD_FILES="${UPLOAD_FILES:-}"
 
 API_BASE="https://gitee.com/api/v5"
 REPO_PATH="${USERNAME}/${REPO_NAME}"
-
-# ==================== 颜色定义 ====================
+PLATFORM_TAG="[Gitee]"
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
@@ -25,14 +24,13 @@ CYAN='\033[0;36m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# ==================== 日志函数 ====================
-log_info() { echo -e "${CYAN}[INFO]${NC} $*"; }
-log_success() { echo -e "${GREEN}[✓]${NC} $*"; }
-log_warning() { echo -e "${YELLOW}[!]${NC} $*"; }
-log_error() { echo -e "${RED}[✗]${NC} $*"; }
-log_debug() { echo -e "${BLUE}[DEBUG]${NC} $*"; }
+log_info() { echo -e "${CYAN}${PLATFORM_TAG}[INFO]${NC} $*"; }
+log_success() { echo -e "${GREEN}${PLATFORM_TAG}[✓]${NC} $*"; }
+log_warning() { echo -e "${YELLOW}${PLATFORM_TAG}[!]${NC} $*"; }
+log_error() { echo -e "${RED}${PLATFORM_TAG}[✗]${NC} $*"; }
+log_debug() { echo -e "${BLUE}${PLATFORM_TAG}[DEBUG]${NC} $*"; }
 
-# ==================== API 函数封装 ====================
+#  API 函数封装 
 api_get() {
     local endpoint="$1"
     curl -s "${API_BASE}${endpoint}?access_token=${GITEE_TOKEN}"
@@ -53,7 +51,7 @@ api_delete() {
         "${API_BASE}${endpoint}?access_token=${GITEE_TOKEN}"
 }
 
-# ==================== 创建初始文件 ====================
+#  创建初始文件 
 create_initial_file() {
     log_info "创建初始文件..."
     
@@ -101,11 +99,11 @@ ${REPO_DESC}
     fi
 }
 
-# ==================== 使用 Git 创建初始提交 ====================
+#  使用 Git 创建初始提交 
 create_initial_commit_with_git() {
     log_debug "使用 Git 创建初始提交..."
     
-    # 🔧 使用独立的临时目录
+    # 使用独立的临时目录
     local temp_dir="${RUNNER_TEMP:-/tmp}/gitee-init-$$-${RANDOM}"
     mkdir -p "$temp_dir"
     
@@ -145,7 +143,7 @@ EOF
     fi
 }
 
-# ==================== 文件上传函数 ====================
+#  文件上传函数 
 upload_file_to_release() {
     local file="$1"
     local release_id="$2"
@@ -168,7 +166,7 @@ upload_file_to_release() {
     fi
 }
 
-# ==================== 核心功能函数 ====================
+#  核心功能函数 
 check_token() {
     echo ""
     log_info "检查环境配置"
@@ -202,7 +200,7 @@ ensure_repository() {
     local private_val="false"
     [ "$REPO_PRIVATE" = "true" ] && private_val="true"
     
-    # 🔧 修改：不使用 auto_init，手动创建文件
+    # 手动创建文件
     response=$(api_post "/user/repos" "{
         \"name\":\"${REPO_NAME}\",
         \"description\":\"${REPO_DESC}\",
@@ -218,7 +216,7 @@ ensure_repository() {
         # 等待仓库创建完成
         sleep 3
         
-        # 🔧 新增：创建初始文件
+        # 新增：创建初始文件
         log_info "初始化仓库..."
         
         # 优先使用 API 创建文件
@@ -251,8 +249,7 @@ ensure_branch() {
         log_success "分支已存在"
         return 0
     fi
-    
-    # 如果分支不存在但仓库有内容，说明是初次创建
+
     log_warning "分支检查完成"
 }
 
@@ -267,7 +264,7 @@ cleanup_old_tags() {
     
     local deleted_count=0
     
-    # 🔧 使用独立的临时目录
+    # 使用独立的临时目录
     local temp_git_dir="${RUNNER_TEMP:-/tmp}/gitee-cleanup-$$-${RANDOM}"
     mkdir -p "$temp_git_dir"
     local current_dir=$(pwd)
@@ -341,7 +338,7 @@ cleanup_old_tags() {
         sleep 1
     done <<< "$tags"
     
-    # 🔧 返回原目录并清理
+    # 返回原目录并清理
     cd "$current_dir"
     rm -rf "$temp_git_dir"
     
@@ -477,17 +474,12 @@ verify_release() {
     fi
 }
 
-# ==================== 主函数 ====================
+#  主函数 
 main() {
-    echo ""
-    echo "═══════════════════════════════════════"
-    echo "  Gitee Release 发布脚本"
-    echo "═══════════════════════════════════════"
-    echo ""
+    echo "${PLATFORM_TAG} Release 发布脚本"
     echo "仓库: ${REPO_PATH}"
     echo "标签: ${TAG_NAME}"
-    echo ""
-    
+
     check_token
     ensure_repository
     ensure_branch
@@ -496,11 +488,7 @@ main() {
     upload_files
     verify_release
     
-    echo ""
-    echo "═══════════════════════════════════════"
     log_success "🎉 发布完成"
-    echo "═══════════════════════════════════════"
-    echo ""
     echo "Release 地址:"
     echo "  https://gitee.com/${REPO_PATH}/releases/tag/${TAG_NAME}"
     echo ""
