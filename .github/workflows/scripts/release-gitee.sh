@@ -197,19 +197,29 @@ ensure_repository() {
 
     log_warning "仓库不存在，创建中..."
 
-    # 按照官
+    # 创建仓库（默认私有）
     response=$(api_post "/user/repos" "{
         \"access_token\": \"${GITEE_TOKEN}\",
         \"name\": \"${REPO_NAME}\",
         \"description\": \"${REPO_DESC}\",
-        \"public\": 1,
         \"has_issues\": true,
         \"has_wiki\": true,
         \"auto_init\": false
     }")
 
     if echo "$response" | jq -e '.id' > /dev/null 2>&1; then
-        log_success "仓库创建成功 (公开)"
+        log_success "仓库创建成功 (默认私有)"
+
+        # 修改为公开仓库
+        local update_response=$(curl -s -X PATCH \
+            "https://gitee.com/api/v5/repos/${REPO_PATH}?access_token=${GITEE_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"private\":false}")
+
+        if echo "$update_response" | jq -e '.private' | grep -q "false"; then
+            log_success "仓库已修改为公开"
+        fi
+
         sleep 3
 
         # 初始化仓库
