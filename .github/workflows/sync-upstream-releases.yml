@@ -414,7 +414,7 @@ jobs:
             exit 1
           fi
 
-      - name: 保存版本信息（仅保存当前项目）
+      - name: 保存版本信息
         if: env.release_success == 'true'
         run: |
           local_name="${{ steps.set-names.outputs.local_name }}"
@@ -475,170 +475,170 @@ jobs:
           path: /tmp/status/${{ matrix.github_repo }}.txt
           retention-days: 1
           
-summary:
-  name: 生成同步报告
-  needs: sync
-  runs-on: ubuntu-latest
-  if: always()
-  
-  steps:
-    - name: 检出仓库
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 1
-      
-    - name: 配置脚本
-      run: chmod +x .github/workflows/scripts/version-manager.sh
-      
-    - name: 下载状态信息
-      uses: actions/download-artifact@v4
-      with:
-        pattern: status-*
-        path: /tmp/artifacts
-        merge-multiple: false
+  summary:
+    name: 生成同步报告
+    needs: sync
+    runs-on: ubuntu-latest
+    if: always()
     
-    - name: 下载版本更新信息
-      uses: actions/download-artifact@v4
-      with:
-        pattern: version-*
-        path: /tmp/versions
-        merge-multiple: false
-      continue-on-error: true
-    
-    - name: 合并版本记录
-      run: |
-        echo "📝 合并版本记录..."
-        echo ""
-        
-        updated_count=0
-        
-        # 遍历所有版本更新文件
-        for version_dir in /tmp/versions/version-*/; do
-          if [ -d "$version_dir" ]; then
-            for update_file in "$version_dir"update.txt; do
-              if [ -f "$update_file" ]; then
-                # 读取项目名称和版本号
-                IFS='|' read -r name version < "$update_file"
-                
-                if [ -n "$name" ] && [ -n "$version" ]; then
-                  echo "  更新: $name → $version"
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      
+      - name: 配置脚本
+        run: chmod +x .github/workflows/scripts/version-manager.sh
+      
+      - name: 下载状态信息
+        uses: actions/download-artifact@v4
+        with:
+          pattern: status-*
+          path: /tmp/artifacts
+          merge-multiple: false
+      
+      - name: 下载版本更新信息
+        uses: actions/download-artifact@v4
+        with:
+          pattern: version-*
+          path: /tmp/versions
+          merge-multiple: false
+        continue-on-error: true
+      
+      - name: 合并版本记录
+        run: |
+          echo "📝 合并版本记录..."
+          echo ""
+          
+          updated_count=0
+          
+          # 遍历所有版本更新文件
+          for version_dir in /tmp/versions/version-*/; do
+            if [ -d "$version_dir" ]; then
+              for update_file in "$version_dir"update.txt; do
+                if [ -f "$update_file" ]; then
+                  # 读取项目名称和版本号
+                  IFS='|' read -r name version < "$update_file"
                   
-                  # 🔧 关键：在已有的 version.txt 基础上更新
-                  .github/workflows/scripts/version-manager.sh write "$name" "$version"
-                  
-                  updated_count=$((updated_count + 1))
+                  if [ -n "$name" ] && [ -n "$version" ]; then
+                    echo "  更新: $name → $version"
+                    
+                    # 🔧 关键：在已有的 version.txt 基础上更新
+                    .github/workflows/scripts/version-manager.sh write "$name" "$version"
+                    
+                    updated_count=$((updated_count + 1))
+                  fi
+                fi
+              done
+            fi
+          done
+          
+          echo ""
+          if [ $updated_count -gt 0 ]; then
+            echo "✅ 共更新 $updated_count 个版本记录"
+            echo "need_push=true" >> $GITHUB_ENV
+          else
+            echo "ℹ️  没有版本需要更新"
+          fi
+      
+      - name: 推送版本记录
+        if: env.need_push == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add version.txt
+          
+          if ! git diff --staged --quiet; then
+            # 显示变更
+            echo "变更内容:"
+            git diff --cached version.txt
+            
+            git commit -m "📝 批量更新版本记录
+            
+            更新时间: $(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S')"
+            
+            # 推送（带重试）
+            max_retries=3
+            retry=0
+            
+            while [ $retry -lt $max_retries ]; do
+              if git push origin ${{ github.ref_name }}; then
+                echo "✅ 版本记录推送成功"
+                break
+              else
+                retry=$((retry + 1))
+                if [ $retry -lt $max_retries ]; then
+                  echo "⚠️  推送失败，重试 $retry/$max_retries..."
+                  sleep 3
+                  git pull --rebase origin ${{ github.ref_name }}
+                else
+                  echo "❌ 推送失败"
+                  exit 1
                 fi
               fi
             done
+          else
+            echo "ℹ️  version.txt 无变化"
           fi
-        done
-        
-        echo ""
-        if [ $updated_count -gt 0 ]; then
-          echo "✅ 共更新 $updated_count 个版本记录"
-          echo "need_push=true" >> $GITHUB_ENV
-        else
-          echo "ℹ️  没有版本需要更新"
-        fi
-    
-    - name: 推送版本记录
-      if: env.need_push == 'true'
-      run: |
-        git config user.name "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
-        
-        git add version.txt
-        
-        if ! git diff --staged --quiet; then
-          # 显示变更
-          echo "变更内容:"
-          git diff --cached version.txt
           
-          git commit -m "📝 批量更新版本记录
+      - name: 生成报告
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          # 📋 上游同步报告
           
-          更新时间: $(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S')"
+          **执行时间:** $(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S') (北京时间)
           
-          # 推送（带重试）
-          max_retries=3
-          retry=0
+          ## 📊 同步详情
           
-          while [ $retry -lt $max_retries ]; do
-            if git push origin ${{ github.ref_name }}; then
-              echo "✅ 版本记录推送成功"
-              break
-            else
-              retry=$((retry + 1))
-              if [ $retry -lt $max_retries ]; then
-                echo "⚠️  推送失败，重试 $retry/$max_retries..."
-                sleep 3
-                git pull --rebase origin ${{ github.ref_name }}
-              else
-                echo "❌ 推送失败"
-                exit 1
-              fi
+          | 上游项目 | 仓库名称 | 上游版本 | 本地版本 | 状态 |
+          |----------|----------|----------|----------|------|
+          EOF
+          
+          total=0
+          updated=0
+          skipped=0
+          failed=0
+          
+          for artifact_dir in /tmp/artifacts/status-*/; do
+            if [ -d "$artifact_dir" ]; then
+              for status_file in "$artifact_dir"*.txt; do
+                if [ -f "$status_file" ]; then
+                  github_repo=$(sed -n '1p' "$status_file" | tr -d '\r')
+                  local_name=$(sed -n '2p' "$status_file" | tr -d '\r')
+                  upstream_ver=$(sed -n '3p' "$status_file" | tr -d '\r')
+                  local_ver=$(sed -n '4p' "$status_file" | tr -d '\r')
+                  status=$(sed -n '5p' "$status_file" | tr -d '\r')
+                  
+                  total=$((total + 1))
+                  case "$status" in
+                    *"已发布"*) updated=$((updated + 1)) ;;
+                    *"无需更新"*) skipped=$((skipped + 1)) ;;
+                    *"失败"*) failed=$((failed + 1)) ;;
+                  esac
+                  
+                  echo "| $github_repo | $local_name | $upstream_ver | $local_ver | $status |" >> $GITHUB_STEP_SUMMARY
+                fi
+              done
             fi
           done
-        else
-          echo "ℹ️  version.txt 无变化"
-        fi
-        
-    - name: 生成报告
-      run: |
-        cat >> $GITHUB_STEP_SUMMARY << 'EOF'
-        # 📋 上游同步报告
-        
-        **执行时间:** $(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S') (北京时间)
-        
-        ## 📊 同步详情
-        
-        | 上游项目 | 仓库名称 | 上游版本 | 本地版本 | 状态 |
-        |----------|----------|----------|----------|------|
-        EOF
-        
-        total=0
-        updated=0
-        skipped=0
-        failed=0
-        
-        for artifact_dir in /tmp/artifacts/status-*/; do
-          if [ -d "$artifact_dir" ]; then
-            for status_file in "$artifact_dir"*.txt; do
-              if [ -f "$status_file" ]; then
-                github_repo=$(sed -n '1p' "$status_file" | tr -d '\r')
-                local_name=$(sed -n '2p' "$status_file" | tr -d '\r')
-                upstream_ver=$(sed -n '3p' "$status_file" | tr -d '\r')
-                local_ver=$(sed -n '4p' "$status_file" | tr -d '\r')
-                status=$(sed -n '5p' "$status_file" | tr -d '\r')
-                
-                total=$((total + 1))
-                case "$status" in
-                  *"已发布"*) updated=$((updated + 1)) ;;
-                  *"无需更新"*) skipped=$((skipped + 1)) ;;
-                  *"失败"*) failed=$((failed + 1)) ;;
-                esac
-                
-                echo "| $github_repo | $local_name | $upstream_ver | $local_ver | $status |" >> $GITHUB_STEP_SUMMARY
-              fi
-            done
-          fi
-        done
-        
-        cat >> $GITHUB_STEP_SUMMARY << EOF
-        
-        ---
-        
-        **统计:** 总计 $total 个项目 | 已发布 $updated 个 | 无需更新 $skipped 个 | 失败 $failed 个
-        
-        **发布平台:**
-        - 🌐 GitCode
-        - 🌐 Gitee
-        EOF
-        
-    - name: 清理临时文件
-      if: always()
-      uses: geekyeggo/delete-artifact@v5
-      with:
-        name: |
-          status-*
-          version-*
-        failOnError: false
+          
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          
+          ---
+          
+          **统计:** 总计 $total 个项目 | 已发布 $updated 个 | 无需更新 $skipped 个 | 失败 $failed 个
+          
+          **发布平台:**
+          - 🌐 GitCode
+          - 🌐 Gitee
+          EOF
+      
+      - name: 清理临时文件
+        if: always()
+        uses: geekyeggo/delete-artifact@v5
+        with:
+          name: |
+            status-*
+            version-*
+          failOnError: false
