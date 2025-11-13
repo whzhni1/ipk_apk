@@ -480,6 +480,29 @@ verify_release() {
     fi
 }
 
+set_public_repo() {
+    echo ""
+    log_info "修改仓库为公开"
+
+    local update_response=$(curl -s -X PATCH \
+        "https://gitee.com/api/v5/repos/${REPO_PATH}?access_token=${GITEE_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "name": "'"${REPO_NAME}"'",
+            "description": "'"${REPO_DESC}"'",
+            "private": false
+        }')
+
+    # 打印返回结果以便调试
+    log_debug "响应: $update_response"
+
+    if echo "$update_response" | jq -e '.private' | grep -q "false"; then
+        log_success "仓库已修改为公开"
+    else
+        log_warning "仓库仍然是私有，可能需要手动设置"
+    fi
+}
+
 #  主函数 
 main() {
     echo "${PLATFORM_TAG} Release 发布脚本"
@@ -492,16 +515,8 @@ main() {
     create_release
     upload_files
     verify_release
-    # 设置为公开仓库
-    local update_response=$(curl -s -X PATCH \
-       "https://gitee.com/api/v5/repos/${REPO_PATH}?access_token=${GITEE_TOKEN}" \
-       -H "Content-Type: application/json" \
-       -d "{\"private\":false}")
-
-    if echo "$update_response" | jq -e '.private' | grep -q "false"; then
-        log_success "仓库已修改为公开"
-    fi
-
+    set_public_repo
+    
     log_success "🎉 发布完成"
     echo "Release 地址:"
     echo "  https://gitee.com/${REPO_PATH}/releases/tag/${TAG_NAME}"
