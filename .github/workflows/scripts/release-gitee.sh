@@ -187,46 +187,44 @@ check_token() {
 ensure_repository() {
     echo ""
     log_info "步骤 1/5: 检查仓库"
-    
+
     local response=$(api_get "/repos/${REPO_PATH}")
-    
+
     if echo "$response" | jq -e '.id' > /dev/null 2>&1; then
         log_success "仓库已存在"
         return 0
     fi
-    
+
     log_warning "仓库不存在，创建中..."
-    
-    local private_val="false"
-    [ "$REPO_PRIVATE" = "true" ] && private_val="true"
-    
-    # 创建空仓库
+
+    # 按照官
     response=$(api_post "/user/repos" "{
-        \"name\":\"${REPO_NAME}\",
-        \"description\":\"${REPO_DESC}\",
-        \"public\":1,
-        \"has_issues\":true,
-        \"has_wiki\":true,
-        \"auto_init\":false
+        \"access_token\": \"${GITEE_TOKEN}\",
+        \"name\": \"${REPO_NAME}\",
+        \"description\": \"${REPO_DESC}\",
+        \"public\": 1,
+        \"has_issues\": true,
+        \"has_wiki\": true,
+        \"auto_init\": false
     }")
-    
+
     if echo "$response" | jq -e '.id' > /dev/null 2>&1; then
-        log_success "仓库创建成功"
+        log_success "仓库创建成功 (公开)"
         sleep 3
-        
-        # 直接在 main 分支初始化
+
+        # 初始化仓库
         log_info "初始化仓库到分支: ${BRANCH}"
-        
+
         local temp_dir="${RUNNER_TEMP:-/tmp}/gitee-init-$$-${RANDOM}"
         mkdir -p "$temp_dir"
-        
+
         local current_dir=$(pwd)
         cd "$temp_dir"
-        
+
         git init -q
         git config user.name "Gitee Bot"
         git config user.email "bot@gitee.com"
-        
+
         cat > README.md << EOF
 # ${REPO_NAME}
 
@@ -236,30 +234,29 @@ ${REPO_DESC}
 
 本仓库用于自动发布构建产物。
 EOF
-        
+
         git add README.md
         git commit -m "Initial commit" -q
-        
+
         local git_url="https://oauth2:${GITEE_TOKEN}@gitee.com/${REPO_PATH}.git"
         git remote add origin "$git_url"
-        
-        # 推送到目标分支（第一次推送会成为默认分支）
+
         if git push -u origin HEAD:"${BRANCH}" 2>&1 | sed "s/${GITEE_TOKEN}/***TOKEN***/g"; then
             log_success "仓库初始化完成 (分支: ${BRANCH})"
-            cd "$current_dir"
-            rm -rf "$temp_dir"
         else
             log_error "初始化失败"
-            cd "$current_dir"
-            rm -rf "$temp_dir"
             exit 1
         fi
+
+        cd "$current_dir"
+        rm -rf "$temp_dir"
     else
         log_error "仓库创建失败"
         log_debug "响应: $response"
         exit 1
     fi
 }
+
 
 ensure_branch() {
     echo ""
