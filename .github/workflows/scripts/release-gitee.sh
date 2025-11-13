@@ -200,30 +200,54 @@ ensure_repository() {
     local private_val="false"
     [ "$REPO_PRIVATE" = "true" ] && private_val="true"
     
+    # 使用 auto_init + default_branch 直接在 main 分支初始化
     response=$(api_post "/user/repos" "{
         \"name\":\"${REPO_NAME}\",
         \"description\":\"${REPO_DESC}\",
         \"private\":${private_val},
         \"has_issues\":true,
         \"has_wiki\":true,
-        \"auto_init\":false,
+        \"auto_init\":true,
         \"default_branch\":\"${BRANCH}\"
     }")
     
     if echo "$response" | jq -e '.id' > /dev/null 2>&1; then
         log_success "仓库创建成功 (默认分支: ${BRANCH})"
-        sleep 3
         
-        log_info "初始化仓库..."
-        if ! create_initial_file; then
-            if ! create_initial_commit_with_git; then
-                log_error "仓库初始化失败"
-                exit 1
+        # 等待 auto_init 完成
+        log_debug "等待仓库初始化..."
+        sleep 5
+        
+        # 验证分支是否创建成功
+        local branch_check=$(api_get "/repos/${REPO_PATH}/branches/${BRANCH}")
+        if echo "$branch_check" | jq -e '.name' > /dev/null 2>&1; then
+            log_success "仓库初始化完成"
+        else
+            log_warning "auto_init 可能未使用 ${BRANCH}，检查实际分支..."
+            
+            # 获取实际的默认分支
+            local repo_info=$(api_get "/repos/${REPO_PATH}")
+            local actual_branch=$(echo "$repo_info" | jq -r '.default_branch // "master"')
+            
+            log_debug "实际默认分支: $actual_branch"
+            
+            # 如果不是目标分支，需要创建
+            if [ "$actual_branch" != "$BRANCH" ]; then
+                log_info "基于 ${actual_branch} 创建分支: ${BRANCH}"
+                
+                local create_response=$(curl -s -X POST \
+                    "${API_BASE}/repos/${REPO_PATH}/branches?access_token=${GITEE_TOKEN}" \
+                    -F "refs=${actual_branch}" \
+                    -F "branch_name=${BRANCH}")
+                
+                if echo "$create_response" | jq -e '.name' > /dev/null 2>&1; then
+                    log_success "分支 ${BRANCH} 创建成功"
+                else
+                    log_error "分支创建失败"
+                    exit 1
+                fi
             fi
         fi
-        
-        sleep 2
-        log_success "仓库初始化完成"
     else
         log_error "仓库创建失败"
         log_debug "响应: $response"
