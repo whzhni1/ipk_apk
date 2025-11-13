@@ -350,7 +350,6 @@ jobs:
         ### 🔨 构建信息
         - 构建时间: ${BUILD_TIME} (北京时间)
         - 工作流运行: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        - 架构数量: 33 个
         - SDK 版本: OpenWrt 24.10 + SNAPSHOT"
     
         UPLOAD_FILES=$(find "$RELEASE_DIR" -type f \( -name "*.ipk" -o -name "*.apk" \) | tr '\n' ' ')
