@@ -11,7 +11,7 @@ REPO_PRIVATE="${REPO_PRIVATE:-false}"
 TAG_NAME="${TAG_NAME:-v1.0.0}"
 RELEASE_TITLE="${RELEASE_TITLE:-Release ${TAG_NAME}}"
 RELEASE_BODY="${RELEASE_BODY:-Release ${TAG_NAME}}"
-BRANCH="${BRANCH:-master}"
+BRANCH="${BRANCH:-main}"
 UPLOAD_FILES="${UPLOAD_FILES:-}"
 
 API_BASE="https://gitee.com/api/v5"
@@ -200,53 +200,59 @@ ensure_repository() {
     local private_val="false"
     [ "$REPO_PRIVATE" = "true" ] && private_val="true"
     
-    # 使用 auto_init + default_branch 直接在 main 分支初始化
+    # 创建空仓库
     response=$(api_post "/user/repos" "{
         \"name\":\"${REPO_NAME}\",
         \"description\":\"${REPO_DESC}\",
         \"private\":${private_val},
         \"has_issues\":true,
         \"has_wiki\":true,
-        \"auto_init\":true,
-        \"default_branch\":\"${BRANCH}\"
+        \"auto_init\":false
     }")
     
     if echo "$response" | jq -e '.id' > /dev/null 2>&1; then
-        log_success "仓库创建成功 (默认分支: ${BRANCH})"
+        log_success "仓库创建成功"
+        sleep 3
         
-        # 等待 auto_init 完成
-        log_debug "等待仓库初始化..."
-        sleep 5
+        # 直接在 main 分支初始化
+        log_info "初始化仓库到分支: ${BRANCH}"
         
-        # 验证分支是否创建成功
-        local branch_check=$(api_get "/repos/${REPO_PATH}/branches/${BRANCH}")
-        if echo "$branch_check" | jq -e '.name' > /dev/null 2>&1; then
-            log_success "仓库初始化完成"
+        local temp_dir="${RUNNER_TEMP:-/tmp}/gitee-init-$$-${RANDOM}"
+        mkdir -p "$temp_dir"
+        
+        local current_dir=$(pwd)
+        cd "$temp_dir"
+        
+        git init -q
+        git config user.name "Gitee Bot"
+        git config user.email "bot@gitee.com"
+        
+        cat > README.md << EOF
+# ${REPO_NAME}
+
+${REPO_DESC}
+
+## 📦 Release
+
+本仓库用于自动发布构建产物。
+EOF
+        
+        git add README.md
+        git commit -m "Initial commit" -q
+        
+        local git_url="https://oauth2:${GITEE_TOKEN}@gitee.com/${REPO_PATH}.git"
+        git remote add origin "$git_url"
+        
+        # 推送到目标分支（第一次推送会成为默认分支）
+        if git push -u origin HEAD:"${BRANCH}" 2>&1 | sed "s/${GITEE_TOKEN}/***TOKEN***/g"; then
+            log_success "仓库初始化完成 (分支: ${BRANCH})"
+            cd "$current_dir"
+            rm -rf "$temp_dir"
         else
-            log_warning "auto_init 可能未使用 ${BRANCH}，检查实际分支..."
-            
-            # 获取实际的默认分支
-            local repo_info=$(api_get "/repos/${REPO_PATH}")
-            local actual_branch=$(echo "$repo_info" | jq -r '.default_branch // "master"')
-            
-            log_debug "实际默认分支: $actual_branch"
-            
-            # 如果不是目标分支，需要创建
-            if [ "$actual_branch" != "$BRANCH" ]; then
-                log_info "基于 ${actual_branch} 创建分支: ${BRANCH}"
-                
-                local create_response=$(curl -s -X POST \
-                    "${API_BASE}/repos/${REPO_PATH}/branches?access_token=${GITEE_TOKEN}" \
-                    -F "refs=${actual_branch}" \
-                    -F "branch_name=${BRANCH}")
-                
-                if echo "$create_response" | jq -e '.name' > /dev/null 2>&1; then
-                    log_success "分支 ${BRANCH} 创建成功"
-                else
-                    log_error "分支创建失败"
-                    exit 1
-                fi
-            fi
+            log_error "初始化失败"
+            cd "$current_dir"
+            rm -rf "$temp_dir"
+            exit 1
         fi
     else
         log_error "仓库创建失败"
