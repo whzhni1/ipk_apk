@@ -181,64 +181,111 @@ download_and_install_single() {
     fi
 }
 
+# 提取app名称
+extract_app_name() {
+    local pkg="$1"
+    case "$pkg" in
+        luci-app-*) echo "${pkg#luci-app-}" ;;
+        luci-theme-*) echo "${pkg#luci-theme-}" ;;
+        *) echo "$pkg" ;;
+    esac
+}
+
+# 从assets中提取指定文件的下载地址
+get_download_url_for_file() {
+    local assets_json="$1"
+    local filename="$2"
+    
+    # 找到包含该文件名的行，然后提取 browser_download_url
+    echo "$assets_json" | grep "\"name\":\"$filename\"" | grep -o '"browser_download_url":"[^"]*"' | head -1 | cut -d'"' -f4
+}
+
 # 匹配并下载安装所有文件
 match_and_download() {
     local assets_json="$1" pkg_name="$2" platform="$3"
     
-    # GitCode需要过滤掉type=source的文件
+    # 提取 app_name
+    local app_name=$(extract_app_name "$pkg_name")
+    log "  应用名: $app_name"
+    
+    # 过滤掉 GitCode 的 type=source 文件
     local filtered_assets="$assets_json"
     [ "$platform" = "gitcode" ] && filtered_assets=$(echo "$assets_json" | grep '"type":"attach"')
     
-    local success_count=0
+    # 提取所有文件名
+    local all_files=$(echo "$filtered_assets" | grep -o "\"name\":\"[^\"]*$PKG_EXT\"" | cut -d'"' -f4)
     
-    # 1. 找架构包（找到第一个就停止）
+    [ -z "$all_files" ] && { log "  ✗ 未找到任何 $PKG_EXT 文件"; return 1; }
+    
+    log "  找到 $(echo "$all_files" | wc -l) 个文件"
+    
+    local success_count=0
+    local arch_found=0
+    
+    # 1. 查找架构包（找到第一个就停）
     log "  查找架构包..."
     for arch in $ARCH_FALLBACK; do
-        # 提取包含该架构的文件JSON对象
-        local arch_asset=$(echo "$filtered_assets" | grep -o '{[^}]*"name":"[^"]*'"$arch"'[^"]*'"$PKG_EXT"'"[^}]*}' | head -1)
+        [ $arch_found -eq 1 ] && break
         
-        if [ -n "$arch_asset" ]; then
-            local filename=$(echo "$arch_asset" | grep -o '"name":"[^"]*"' | cut -d'"' -f4)
-            local download_url=$(echo "$arch_asset" | grep -o '"browser_download_url":"[^"]*"' | cut -d'"' -f4)
-            
-            if [ -n "$download_url" ]; then
-                log "  [架构包] $filename ($arch)"
-                download_and_install_single "$filename" "$download_url" && success_count=$((success_count + 1))
-                break  # 找到第一个就停止架构遍历
-            fi
-        fi
+        for filename in $all_files; do
+            # 文件名包含架构 且 包含app_name 且 不是luci开头
+            case "$filename" in
+                luci-*) continue ;;
+                *${arch}*${PKG_EXT})
+                    if echo "$filename" | grep -q "$app_name"; then
+                        local download_url=$(get_download_url_for_file "$filtered_assets" "$filename")
+                        if [ -n "$download_url" ]; then
+                            log "  [架构包] $filename ($arch)"
+                            download_and_install_single "$filename" "$download_url" && {
+                                success_count=$((success_count + 1))
+                                arch_found=1
+                            }
+                            break 2
+                        fi
+                    fi
+                    ;;
+            esac
+        done
     done
     
-    # 2. 找 luci-app 或 luci-theme 包
+    # 2. 查找 luci-app 或 luci-theme 包
     log "  查找 Luci 包..."
-    local luci_asset=$(echo "$filtered_assets" | grep -o '{[^}]*"name":"luci-[^"]*'"$PKG_EXT"'"[^}]*}' | head -1)
+    for filename in $all_files; do
+        case "$filename" in
+            luci-app-${app_name}_*${PKG_EXT}|luci-theme-${app_name}_*${PKG_EXT})
+                local download_url=$(get_download_url_for_file "$filtered_assets" "$filename")
+                if [ -n "$download_url" ]; then
+                    log "  [Luci包] $filename"
+                    download_and_install_single "$filename" "$download_url" && success_count=$((success_count + 1))
+                    break
+                fi
+                ;;
+        esac
+    done
     
-    if [ -n "$luci_asset" ]; then
-        local filename=$(echo "$luci_asset" | grep -o '"name":"[^"]*"' | cut -d'"' -f4)
-        local download_url=$(echo "$luci_asset" | grep -o '"browser_download_url":"[^"]*"' | cut -d'"' -f4)
-        
-        if [ -n "$download_url" ]; then
-            log "  [Luci包] $filename"
-            download_and_install_single "$filename" "$download_url" && success_count=$((success_count + 1))
-        fi
-    fi
-    
-    # 3. 找语言包（zh-cn）
+    # 3. 查找语言包
     log "  查找语言包..."
-    local lang_asset=$(echo "$filtered_assets" | grep -o '{[^}]*"name":"[^"]*zh-cn[^"]*'"$PKG_EXT"'"[^}]*}' | head -1)
-    
-    if [ -n "$lang_asset" ]; then
-        local filename=$(echo "$lang_asset" | grep -o '"name":"[^"]*"' | cut -d'"' -f4)
-        local download_url=$(echo "$lang_asset" | grep -o '"browser_download_url":"[^"]*"' | cut -d'"' -f4)
-        
-        if [ -n "$download_url" ]; then
-            log "  [语言包] $filename"
-            download_and_install_single "$filename" "$download_url" && success_count=$((success_count + 1))
-        fi
-    fi
+    for filename in $all_files; do
+        case "$filename" in
+            *luci-i18n-*${app_name}*zh-cn*${PKG_EXT})
+                local download_url=$(get_download_url_for_file "$filtered_assets" "$filename")
+                if [ -n "$download_url" ]; then
+                    log "  [语言包] $filename"
+                    download_and_install_single "$filename" "$download_url" && success_count=$((success_count + 1))
+                    break
+                fi
+                ;;
+        esac
+    done
     
     # 至少成功安装一个文件
-    [ $success_count -gt 0 ] && return 0 || return 1
+    if [ $success_count -gt 0 ]; then
+        log "  ✓ 成功安装 $success_count 个文件"
+        return 0
+    else
+        log "  ✗ 未安装任何文件"
+        return 1
+    fi
 }
 
 # 统一的包处理函数
