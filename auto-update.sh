@@ -198,9 +198,13 @@ process_package() {
         
         local tags_json=$(api_get_tags "$platform" "$owner" "$pkg")
         
-        echo "$tags_json" | grep -q '"message"' && {
-            local error=$(echo "$tags_json" | grep -o '"message":"[^"]*"' | cut -d'"' -f4)
-            log "  ✗ 获取tags失败: $error"
+        echo "$tags_json" | grep -q '"name"' || {
+            if echo "$tags_json" | grep -q '"message"'; then
+                local error=$(echo "$tags_json" | grep -o '"message":"[^"]*"' | cut -d'"' -f4 | head -1)
+                echo "$error" | grep -q "404\|Not Found\|does not exist" && log "  ✗ 仓库不存在: $owner/$pkg"
+            else
+                log "  ✗ 获取tags失败: 无响应"
+            fi
             continue
         }
         
@@ -217,9 +221,15 @@ process_package() {
         
         local release_json=$(api_get_release_by_tag "$platform" "$owner" "$pkg" "$latest_tag")
         
-        echo "$release_json" | grep -q '"message"' && { log "  ✗ 未找到Release"; continue; }
-        
-        echo "$release_json" | grep -q '"assets"' || { log "  ✗ Release无assets"; continue; }
+        echo "$release_json" | grep -q '"assets"' || {
+            if echo "$release_json" | grep -q '"message"'; then
+                local error=$(echo "$release_json" | grep -o '"message":"[^"]*"' | cut -d'"' -f4)
+                log "  ✗ Release错误: $error"
+            else
+                log "  ✗ 未找到Release"
+            fi
+            continue
+        }
         
         local assets=$(echo "$release_json" | sed -n '/"assets":\[/,/\]/p')
         
