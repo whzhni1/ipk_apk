@@ -7,7 +7,7 @@ DEVICE_MODEL="$(cat /tmp/sysinfo/model 2>/dev/null || echo '未知设备')"
 PUSH_TITLE="$DEVICE_MODEL 插件更新通知"
 USER_AGENT="Mozilla/5.0 (compatible; OpenWrt-AutoUpdate/2.0)"
 EXCLUDE_PACKAGES="kernel kmod- base-files busybox lib opkg uclient-fetch ca-bundle ca-certificates luci-app-lucky"
-EMPTY_VARS="SYS_ARCH ARCH_FALLBACK PKG_EXT PKG_INSTALL PKG_UPDATE AUTO_UPDATE CRON_TIME INSTALL_PRIORITY GITEE_TOKEN GITCODE_TOKEN THIRD_PARTY_INSTALLED API_SOURCES FILE_MAP"
+EMPTY_VARS="SYS_ARCH ARCH_FALLBACK PKG_EXT PKG_INSTALL PKG_UPDATE AUTO_UPDATE CRON_TIME INSTALL_PRIORITY GITEE_TOKEN GITCODE_TOKEN THIRD_PARTY_INSTALLED API_SOURCES ASSET_FILENAMES ASSETS_JSON_CACHE"
 
 for var in $EMPTY_VARS; do eval "$var=''"; done
 CONFIG_BACKED_UP=0
@@ -119,70 +119,56 @@ extract_app_name() {
     esac
 }
 
-# 提取文件名和下载地址映射（全局变量）
-extract_file_map() {
-    local assets_json="$1"
-    
-    FILE_MAP=""
-    
-    # 修复：正确拼接正则表达式
-    local filenames=$(echo "$assets_json" | grep -o '"name":"[^"]*\'"${PKG_EXT}"'"' | cut -d'"' -f4)
-    
-    # 调试：显示提取到的所有文件名
-    if [ -n "$filenames" ]; then
-        local count=$(echo "$filenames" | wc -l)
-        log "  [调试] 从JSON中提取到 $count 个文件名"
-    else
-        log "  [调试] 未从JSON中提取到任何文件名"
-        # 显示assets内容的前500字符用于调试
-        log "  [调试] assets内容预览: $(echo "$assets_json" | head -c 500)"
+# 提取文件名列表
+extract_filenames() {
+    local json_data="$1"
+    ASSETS_JSON_CACHE="$json_data"
+    case "$PKG_EXT" in
+        .ipk)
+            ASSET_FILENAMES=$(echo "$json_data" | grep -o '"name":"[^"]*\.ipk"' | cut -d'"' -f4)
+            ;;
+        .apk)
+            ASSET_FILENAMES=$(echo "$json_data" | grep -o '"name":"[^"]*\.apk"' | cut -d'"' -f4)
+            ;;
+        *)
+            log "  [错误] 不支持的包格式: $PKG_EXT"
+            return 1
+            ;;
+    esac
+    [ -z "$ASSET_FILENAMES" ] && {
+        log "  [调试] 未找到任何 ${PKG_EXT} 文件"
         return 1
-    fi
-    
-    # 为每个文件名查找下载地址
-    local old_IFS="$IFS"
-    IFS=$'\n'
-    for filename in $filenames; do
-        [ -z "$filename" ] && continue
-        
-        local url=$(echo "$assets_json" | grep -o '"browser_download_url":"https[^"]*'"$filename"'"' | cut -d'"' -f4 | head -1)
-        if [ -z "$url" ]; then
-            url=$(echo "$assets_json" | grep -o 'https://[^"]*'"$filename" | head -1)
-        fi
-        
-        if [ -n "$url" ]; then
-            FILE_MAP="${FILE_MAP}${filename}|${url}
-"
-            log "  [调试] 映射: $filename"
-        else
-            log "  [调试] 未找到URL: $filename"
-        fi
-    done
-    IFS="$old_IFS"
-    
-    [ -z "$FILE_MAP" ] && return 1
+    }
+    local count=$(echo "$ASSET_FILENAMES" | wc -l)
+    log "  [调试] 成功提取 $count 个文件名"
     return 0
 }
 
-# 从映射中获取下载地址
+# 根据文件名查找下载地址
 get_download_url() {
     local filename="$1"
-    echo "$FILE_MAP" | grep "^${filename}|" | cut -d'|' -f2 | head -1
+    local url=$(echo "$ASSETS_JSON_CACHE" | grep -o "https://[^\"]*${filename}" | head -1)
+    url=$(echo "$url" | sed 's|https://api\.gitcode\.com/|https://gitcode.com/|')
+    echo "$url"
 }
 
 # 获取所有文件名列表
 get_all_filenames() {
-    echo "$FILE_MAP" | cut -d'|' -f1
+    echo "$ASSET_FILENAMES"
 }
 
 # 下载并安装单个文件
 download_and_install_single() {
-    local filename="$1" download_url="$2"
+    local filename="$1"
+    local download_url=$(get_download_url "$filename")
     
+    [ -z "$download_url" ] && {
+        log "    ✗ 未找到下载地址: $filename"
+        return 1
+    }
     log "    下载: $filename"
-    
     curl -fsSL -o "/tmp/$filename" "$download_url" 2>/dev/null || {
-        log "    ✗ 下载失败 $download_url"
+        log "    ✗ 下载失败"
         return 1
     }
     
@@ -211,10 +197,8 @@ match_and_download() {
     
     local app_name=$(extract_app_name "$pkg_name")
     log "  应用名: $app_name"
-    
-    # 一次性提取所有文件映射
-    extract_file_map "$assets_json" || {
-        log "  ✗ 文件映射提取失败，平台: $platform"
+    extract_filenames "$assets_json" || {
+        log "  ✗ 文件名提取失败，平台: $platform"
         return 1
     }
     
@@ -227,49 +211,47 @@ match_and_download() {
     
     local file_count=$(echo "$all_files" | wc -l)
     log "  找到 $file_count 个 $PKG_EXT 文件"
-    
-    # 显示文件列表
-    log "  文件列表（前10个）:"
-    echo "$all_files" | head -10 | while read fname; do
-        [ -n "$fname" ] && log "    - $fname"
-    done
-    [ $file_count -gt 10 ] && log "    ... 还有 $((file_count - 10)) 个文件"
+    if [ "$file_count" -le 5 ]; then
+        log "  文件列表:"
+        echo "$all_files" | while read fname; do
+            [ -n "$fname" ] && log "    - $fname"
+        done
+    else
+        log "  文件列表（前5个）:"
+        echo "$all_files" | head -5 | while read fname; do
+            [ -n "$fname" ] && log "    - $fname"
+        done
+        log "    ... 还有 $((file_count - 5)) 个文件"
+    fi
     
     local success_count=0
     local old_IFS="$IFS"
-    
-    # 1. 查找架构包
     log "  查找架构包..."
     local arch_found=0
     for arch in $ARCH_FALLBACK; do
         [ $arch_found -eq 1 ] && break
         
+        local arch_matched=0
+        
         IFS=$'\n'
         for filename in $all_files; do
             IFS="$old_IFS"
             [ -z "$filename" ] && continue
-            
             case "$filename" in
                 luci-*) continue ;;
             esac
-            
             if echo "$filename" | grep -q "$arch" && echo "$filename" | grep -q "$app_name"; then
-                local download_url=$(get_download_url "$filename")
-                if [ -n "$download_url" ]; then
-                    log "  [架构包] $filename (匹配: $arch)"
-                    if download_and_install_single "$filename" "$download_url"; then
-                        success_count=$((success_count + 1))
-                        arch_found=1
-                        break
-                    fi
-                else
-                    log "  ✗ 未找到下载地址: $filename"
+                arch_matched=1
+                log "  [架构包] $filename (匹配: $arch)"
+                if download_and_install_single "$filename"; then
+                    success_count=$((success_count + 1))
+                    arch_found=1
                 fi
+                break
             fi
         done
+        [ $arch_matched -eq 1 ] && break
     done
-    
-    # 2. 查找Luci包
     log "  查找Luci包..."
     IFS=$'\n'
     for filename in $all_files; do
@@ -277,18 +259,15 @@ match_and_download() {
         [ -z "$filename" ] && continue
         
         case "$filename" in
-            luci-app-${app_name}_*${PKG_EXT}|luci-theme-${app_name}_*${PKG_EXT})
-                local download_url=$(get_download_url "$filename")
-                if [ -n "$download_url" ]; then
-                    log "  [Luci包] $filename"
-                    download_and_install_single "$filename" "$download_url" && success_count=$((success_count + 1))
-                    break
-                fi
+            luci-app-${app_name}_*${PKG_EXT}|luci-app-${app_name}-*${PKG_EXT}|\
+            luci-theme-${app_name}_*${PKG_EXT}|luci-theme-${app_name}-*${PKG_EXT})
+                log "  [Luci包] $filename"
+                download_and_install_single "$filename" && success_count=$((success_count + 1))
+                break
                 ;;
         esac
     done
     
-    # 3. 查找语言包
     log "  查找语言包..."
     IFS=$'\n'
     for filename in $all_files; do
@@ -296,24 +275,25 @@ match_and_download() {
         [ -z "$filename" ] && continue
         
         case "$filename" in
-            *luci-i18n-*${app_name}*zh-cn*${PKG_EXT})
-                local download_url=$(get_download_url "$filename")
-                if [ -n "$download_url" ]; then
-                    log "  [语言包] $filename"
-                    download_and_install_single "$filename" "$download_url" && success_count=$((success_count + 1))
-                    break
-                fi
+            *luci-i18n-*${app_name}*zh-cn*${PKG_EXT}|*luci-i18n-*${app_name}*zh_cn*${PKG_EXT})
+                log "  [语言包] $filename"
+                download_and_install_single "$filename" && success_count=$((success_count + 1))
+                break
                 ;;
         esac
     done
     
     IFS="$old_IFS"
     
+    # 清理缓存
+    ASSETS_JSON_CACHE=""
+    ASSET_FILENAMES=""
+    
     if [ $success_count -gt 0 ]; then
         log "  ✓ 成功安装 $success_count 个文件"
         return 0
     else
-        log "  ✗ 未安装任何文件，共 $file_count 个文件但均未匹配成功"
+        log "  ✗ 未安装任何文件"
         log "  架构列表: $ARCH_FALLBACK"
         log "  应用名: $app_name"
         return 1
@@ -339,17 +319,12 @@ process_package() {
             continue
         }
         
-        # 提取第一个release（最新版）
-        local first_release=$(echo "$releases_json" | sed 's/^\[//' | sed 's/\]$//' | sed 's/},{/}\n{/g' | head -1)
-        
-        # 提取版本号
-        local latest_tag=$(echo "$first_release" | grep -o '"tag_name":"[^"]*"' | head -1 | cut -d'"' -f4)
+        local latest_tag=$(echo "$releases_json" | grep -o '"tag_name":"[^"]*"' | head -1 | cut -d'"' -f4)
         
         [ -z "$latest_tag" ] && { log "  ✗ 未找到版本"; continue; }
         
         log "  最新版本: $latest_tag"
         
-        # 版本比对（update模式）
         if [ "$check_version" = "1" ]; then
             version_greater "$latest_tag" "$current_ver" || { 
                 log "  ○ 当前版本已是最新 ($current_ver)"
@@ -357,16 +332,8 @@ process_package() {
             }
             log "  发现新版本: $current_ver → $latest_tag"
         fi
-        
-        # 检查assets
-        echo "$first_release" | grep -q '"assets"' || { log "  ✗ 无assets"; continue; }
-        
-        local assets=$(echo "$first_release" | sed -n '/"assets":\[/,/\]/p')
-        
-        echo "$assets" | grep -q '\[\]' && { log "  ✗ assets为空"; continue; }
-        
-        # 匹配并下载安装
-        if match_and_download "$assets" "$pkg" "$platform"; then
+        echo "$releases_json" | grep -q '"assets"' || { log "  ✗ 无assets"; continue; }
+        if match_and_download "$releases_json" "$pkg" "$platform"; then
             log "  ✓ $pkg 安装成功"
             return 0
         else
