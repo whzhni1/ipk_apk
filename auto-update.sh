@@ -37,6 +37,17 @@ load_config() {
     fi
 }
 
+# 解析源配置
+parse_source_config() {
+    local source_config="$1"
+    eval "
+        PLATFORM='$(echo "$source_config" | cut -d'|' -f1)'
+        REPO='$(echo "$source_config" | cut -d'|' -f2)'
+        BRANCH='$(echo "$source_config" | cut -d'|' -f3)'
+        OWNER='$(echo "$source_config" | cut -d'|' -f2 | cut -d'/' -f1)'
+    "
+}
+
 # 通用工具函数
 format_size() {
     local bytes="$1"
@@ -296,8 +307,7 @@ process_package() {
     local pkg="$1" check_version="${2:-0}" current_ver="$3"
     log "处理包: $pkg"
     for source_config in $API_SOURCES; do
-        local platform=$(echo "$source_config" | cut -d'|' -f1)
-        local owner=$(echo "$source_config" | cut -d'|' -f2 | cut -d'/' -f1)
+        parse_source_config "$source_config"
         log "  平台: $platform ($owner/$pkg)"
         local releases_json=$(api_get_latest_release "$platform" "$owner" "$pkg")
         echo "$releases_json" | grep -q '\[' || {
@@ -661,55 +671,69 @@ update_thirdparty_packages() {
     return 0
 }
 
-# 脚本自更新
+# 脚本自更新（精简版）
 check_script_update() {
     log "检查脚本更新"
     log "当前脚本版本: $SCRIPT_VERSION"
-    
+    local temp="/tmp/auto-update-new.sh"
+    local current_script=$(readlink -f "$0")
     for source_config in $API_SOURCES; do
-        local platform=$(echo "$source_config" | cut -d'|' -f1)
-        local repo=$(echo "$source_config" | cut -d'|' -f2)
-        local branch=$(echo "$source_config" | cut -d'|' -f3)
-        
-        log "尝试从 $platform 获取版本信息"
-        
+        parse_source_config "$source_config"
+        local script_url=""
         case "$platform" in
-            gitee) local url="https://gitee.com/${repo}/raw/${branch}/auto-update.sh" ;;
-            gitcode) local url="https://gitcode.com/${repo}/raw/${branch}/auto-update.sh" ;;
-            *) continue ;;
+            gitee)
+                script_url="https://gitee.com/${repo}/raw/${branch}/auto-update.sh"
+                ;;
+            gitcode)
+                script_url="https://gitcode.com/${repo}/raw/${branch}/auto-update.sh"
+                ;;
+            *)
+                log "  ⚠ 不支持的平台: $platform"
+                continue
+                ;;
         esac
-        
-        local header=$(curl -fsSL -H "User-Agent: $USER_AGENT" "$url" 2>/dev/null | head -20)
-        
-        [ -n "$header" ] && {
-            local remote_ver=$(echo "$header" | grep -o 'SCRIPT_VERSION="[^"]*"' | head -n1 | cut -d'"' -f2)
-            
-            [ -n "$remote_ver" ] && {
-                log "  ✓ 获取到远程版本: $remote_ver"
-                
-                [ "$SCRIPT_VERSION" = "$remote_ver" ] && { log "○ 脚本已是最新版本"; return 0; }
-                
-                log "↻ 发现新版本: $SCRIPT_VERSION → $remote_ver"
-                
-                local temp="/tmp/auto-update-new.sh"
-                local current_script=$(readlink -f "$0")
-                
-                curl -fsSL -o "$temp" -H "User-Agent: $USER_AGENT" "$url" 2>/dev/null && \
-                    validate_downloaded_file "$temp" && \
-                    mv "$temp" "$current_script" && \
-                    chmod +x "$current_script" && {
-                    log "✓ 脚本更新成功！版本: $SCRIPT_VERSION → $remote_ver, 来源: $platform"
-                    log "脚本已更新，重新启动新版本"
-                    exec "$current_script"
-                }
-                
-                log "✗ 脚本更新失败"
-                rm -f "$temp"
-            }
+        log "  尝试从 $platform 更新..."
+        curl -fsSL -o "$temp" "$script_url" 2>/dev/null || {
+            log "  ✗ 下载失败: $platform"
+            continue
         }
+        if ! grep -q "run_update" "$temp"; then
+            log "  ✗ 下载不完整: $platform"
+            rm -f "$temp"
+            continue
+        fi
+        local remote_ver=$(grep -o 'SCRIPT_VERSION="[^"]*"' "$temp" | head -1 | cut -d'"' -f2)
+        
+        if [ -z "$remote_ver" ]; then
+            log "  ✗ 无法获取版本号: $platform"
+            rm -f "$temp"
+            continue
+        fi
+        log "  ✓ 获取到远程版本: $remote_ver"
+        if [ "$SCRIPT_VERSION" = "$remote_ver" ]; then
+            log "○ 脚本已是最新版本"
+            rm -f "$temp"
+            return 0
+        fi
+        if version_greater "$remote_ver" "$SCRIPT_VERSION"; then
+            log "↻ 发现新版本: $SCRIPT_VERSION → $remote_ver"
+            if mv "$temp" "$current_script" && chmod +x "$current_script"; then
+                log "✓ 脚本更新成功！版本: $SCRIPT_VERSION → $remote_ver, 来源: $platform"
+                log "脚本已更新，重新启动新版本"
+                exec "$current_script" "$@"
+            else
+                log "✗ 脚本替换失败"
+                rm -f "$temp"
+                return 1
+            fi
+        else
+            log "○ 当前版本较新，无需更新"
+            rm -f "$temp"
+            return 0
+        fi
     done
-    
-    return 0
+    log "✗ 所有源均无法更新脚本"
+    return 1
 }
 
 # 报告生成
