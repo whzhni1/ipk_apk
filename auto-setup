@@ -4,7 +4,7 @@ START=99
 STOP=01
 
 # 脚本配置
-PACKAGES="luci-app-wechatpush luci-app-passwall2 luci-app-openlist luci-app-filemanager luci-i18n-package-manager-zh-cn luci-i18n-firewall-zh-cn vsftpd openssh-sftp-server luci-app-ttyd lucky luci-app-tailscale luci-theme-aurora"
+PACKAGES="luci-app-wechatpush luci-app-passwall2 luci-app-openlist luci-app-filemanager luci-i18n-package-manager-zh-cn luci-i18n-firewall-zh-cn vsftpd openssh-sftp-server luci-app-ttyd lucky tailscale luci-theme-aurora"
 UPDATE_PATH="/usr/bin/auto-update.sh"
 
 # 运行时变量
@@ -24,37 +24,28 @@ log() {
 # 从 auto-setup-fetch 读取配置
 read_fetch_config() {
     local fetch_script="/etc/init.d/auto-setup-fetch"
-    
     [ ! -f "$fetch_script" ] && { log "⚠ 引导脚本不存在: $fetch_script，使用默认配置"; return 1; }
-    
     log "读取引导脚本配置..."
-    
     CRON_TIME=$(grep '^CRON_TIME=' "$fetch_script" | head -1 | cut -d'"' -f2)
     INSTALL_PRIORITY=$(grep '^INSTALL_PRIORITY=' "$fetch_script" | head -1 | cut -d'=' -f2 | tr -d ' ')
     GITEE_TOKEN=$(grep '^GITEE_TOKEN=' "$fetch_script" | head -1 | cut -d'"' -f2)
     GITCODE_TOKEN=$(grep '^GITCODE_TOKEN=' "$fetch_script" | head -1 | cut -d'"' -f2)
-    
     local fetch_packages=$(grep '^PACKAGES=' "$fetch_script" | head -1 | cut -d'"' -f2)
     [ -n "$fetch_packages" ] && PACKAGES="$fetch_packages"
-    
     SCRIPT_URLS=$(sed -n '/^SCRIPT_URLS="/,/"$/p' "$fetch_script" | grep -v '^SCRIPT_URLS=' | grep -v '^"$' | grep 'http' | xargs)
-    
     log "✓ 配置读取完成"
     log "  CRON_TIME: ${CRON_TIME:-未设置}"
     log "  INSTALL_PRIORITY: ${INSTALL_PRIORITY:-1}"
     log "  包数量: $(echo $PACKAGES | wc -w) 个"
-    
     return 0
 }
 
 # 转换 SCRIPT_URLS 为 API_SOURCES 格式
 convert_urls_to_sources() {
     log "转换源地址格式..."
-    
     API_SOURCES=""
     for url in $SCRIPT_URLS; do
         local platform="" repo="" branch=""
-        
         case "$url" in
             *gitcode.com*)
                 platform="gitcode"
@@ -70,19 +61,15 @@ convert_urls_to_sources() {
                 continue
                 ;;
         esac
-        
         [ -n "$platform" ] && [ -n "$repo" ] && [ -n "$branch" ] && \
             API_SOURCES="$API_SOURCES ${platform}|${repo}|${branch}"
     done
-    
     API_SOURCES=$(echo "$API_SOURCES" | xargs)
-    
     [ -z "$API_SOURCES" ] && {
         log "⚠ 未能从 SCRIPT_URLS 转换有效源，SCRIPT_URLS: $SCRIPT_URLS"
         API_SOURCES="gitee|whzhni/ipk_apk|main gitcode|whzhni/ipk_apk|main"
         log "  使用默认配置: $API_SOURCES"
     }
-    
     log "✓ API源: $(echo $API_SOURCES | wc -w) 个"
 }
 
@@ -104,12 +91,12 @@ EOF
 # 检测包管理器类型
 detect_package_manager() {
     case 1 in
-        $(which opkg >/dev/null 2>&1; echo $?))
+        $(which opkg >/dev/null 2>&1 && echo 1 || echo 0))
             PKG_EXT=".ipk"
             PKG_INSTALL="opkg install"
             PKG_UPDATE="opkg update"
             ;;
-        $(which apk >/dev/null 2>&1; echo $?))
+        $(which apk >/dev/null 2>&1 && echo 1 || echo 0))
             PKG_EXT=".apk"
             PKG_INSTALL="apk add --allow-untrusted"
             PKG_UPDATE="apk update"
@@ -125,71 +112,91 @@ detect_package_manager() {
 # 检测架构优先级列表
 detect_arch_priority() {
     local arch_list=""
-
-    case 1 in
-        $(which opkg >/dev/null 2>&1; echo $?))
-            arch_list=$(opkg print-architecture 2>/dev/null | \
-                awk '!/^arch (all|noarch)/ {print $2}')
-            ;;
-        $(which apk >/dev/null 2>&1; echo $?))
-            local base_arch=$(apk --print-arch 2>/dev/null)
-
-            case "$base_arch" in
-                aarch64)
-                    grep -qi "cortex-a53" /proc/cpuinfo && arch_list="$arch_list aarch64_cortex-a53 aarch64-cortex-a53"
-                    grep -qi "cortex-a72" /proc/cpuinfo && arch_list="$arch_list aarch64_cortex-a72 aarch64-cortex-a72"
-                    grep -qi "cortex-a76" /proc/cpuinfo && arch_list="$arch_list aarch64_cortex-a76 aarch64-cortex-a76"
-                    arch_list="$arch_list aarch64_generic aarch64 arm64"
-                    ;;
-                armv7|armhf)
-                    arch_list="$arch_list armv7 arm_cortex-a9 arm_cortex-a7 armhf"
-                    ;;
-                x86_64)
-                    arch_list="$arch_list x86_64 x86-64 amd64"
-                    ;;
-                *)
-                    arch_list="$arch_list $base_arch"
-                    ;;
-            esac
-            ;;
-        *)
-            local cpu_arch=$(uname -m)
-            case "$cpu_arch" in
-                aarch64)
-                    local cpu_part=$(awk '/CPU part/ {print $4; exit}' /proc/cpuinfo)
-                    case "$cpu_part" in
-                        0xd03) arch_list="$arch_list aarch64_cortex-a53 aarch64-cortex-a53" ;;
-                        0xd08) arch_list="$arch_list aarch64_cortex-a72 aarch64-cortex-a72" ;;
-                        0xd0b) arch_list="$arch_list aarch64_cortex-a76 aarch64-cortex-a76" ;;
-                    esac
-                    arch_list="$arch_list aarch64_generic aarch64 arm64"
-                    ;;
-                armv7l)
-                    arch_list="$arch_list armv7 arm_cortex-a9 arm_cortex-a7"
-                    ;;
-                x86_64)
-                    arch_list="$arch_list x86_64 x86-64 amd64"
-                    ;;
-                mipsel)
-                    arch_list="$arch_list mipsel_24kc mipsel mipsle"
-                    ;;
-                *)
-                    arch_list="$arch_list $cpu_arch"
-                    ;;
-            esac
-            ;;
-    esac
-
-    echo "$arch_list" | tr ' ' '\n' | awk '!seen[$0]++' | tr '\n' ' ' | sed 's/ $//'
+    if which opkg >/dev/null 2>&1; then
+        local main_arch=$(opkg print-architecture 2>/dev/null | awk '!/^arch (all|noarch)/ {print $2}' | head -1)
+        case "$main_arch" in
+            aarch64_cortex-a53)
+                arch_list="aarch64_cortex-a53 aarch64-cortex-a53 aarch64_generic aarch64 arm64"
+                ;;
+            aarch64_cortex-a72)
+                arch_list="aarch64_cortex-a72 aarch64-cortex-a72 aarch64_generic aarch64 arm64"
+                ;;
+            aarch64_cortex-a76)
+                arch_list="aarch64_cortex-a76 aarch64-cortex-a76 aarch64_generic aarch64 arm64"
+                ;;
+            aarch64_generic|aarch64)
+                arch_list="aarch64_generic aarch64 arm64"
+                ;;
+            x86_64)
+                arch_list="x86_64 x86-64 amd64"
+                ;;
+            mipsel_24kc)
+                arch_list="mipsel_24kc mipsel mipsle"
+                ;;
+            arm_cortex-a*)
+                arch_list="$main_arch armv7 arm_cortex-a9 arm_cortex-a7 armhf"
+                ;;
+            *)
+                arch_list="$main_arch"
+                ;;
+        esac
+    elif which apk >/dev/null 2>&1; then
+        local base_arch=$(apk --print-arch 2>/dev/null)
+        case "$base_arch" in
+            aarch64)
+                if grep -qi "cortex-a53" /proc/cpuinfo; then
+                    arch_list="aarch64_cortex-a53 aarch64-cortex-a53"
+                elif grep -qi "cortex-a72" /proc/cpuinfo; then
+                    arch_list="aarch64_cortex-a72 aarch64-cortex-a72"
+                elif grep -qi "cortex-a76" /proc/cpuinfo; then
+                    arch_list="aarch64_cortex-a76 aarch64-cortex-a76"
+                fi
+                arch_list="$arch_list aarch64_generic aarch64 arm64"
+                ;;
+            armv7|armhf)
+                arch_list="armv7 arm_cortex-a9 arm_cortex-a7 armhf"
+                ;;
+            x86_64)
+                arch_list="x86_64 x86-64 amd64"
+                ;;
+            *)
+                arch_list="$base_arch"
+                ;;
+        esac
+    else
+        local cpu_arch=$(uname -m)
+        case "$cpu_arch" in
+            aarch64)
+                local cpu_part=$(awk '/CPU part/ {print $4; exit}' /proc/cpuinfo)
+                case "$cpu_part" in
+                    0xd03) arch_list="aarch64_cortex-a53 aarch64-cortex-a53" ;;
+                    0xd08) arch_list="aarch64_cortex-a72 aarch64-cortex-a72" ;;
+                    0xd0b) arch_list="aarch64_cortex-a76 aarch64-cortex-a76" ;;
+                esac
+                arch_list="$arch_list aarch64_generic aarch64 arm64"
+                ;;
+            armv7l)
+                arch_list="armv7 arm_cortex-a9 arm_cortex-a7"
+                ;;
+            x86_64)
+                arch_list="x86_64 x86-64 amd64"
+                ;;
+            mipsel)
+                arch_list="mipsel_24kc mipsel mipsle"
+                ;;
+            *)
+                arch_list="$cpu_arch"
+                ;;
+        esac
+    fi
+    echo "$arch_list"
 }
 
 # 初始化架构信息
 init_arch() {
     local full_list=$(detect_arch_priority)
-    
     SYS_ARCH=$(echo "$full_list" | awk '{print $1}')
     ARCH_FALLBACK="$full_list"
-    
     log "系统架构: $SYS_ARCH"
     log "架构列表: $ARCH_FALLBACK"
 }
@@ -197,50 +204,39 @@ init_arch() {
 # 保存系统信息到配置文件
 save_system_info() {
     cat >> /etc/auto-setup.conf <<EOF
-
 # 系统信息（自动检测）
 SYS_ARCH="$SYS_ARCH"
 ARCH_FALLBACK="$ARCH_FALLBACK"
 PKG_EXT="$PKG_EXT"
 PKG_INSTALL="$PKG_INSTALL"
 EOF
-    
     log "✓ 系统信息已保存到配置"
 }
 
 # 检查包是否已安装
 is_installed() {
-    case 1 in
-        $(echo "$PKG_INSTALL" | grep -q "opkg"; echo $?))
-            opkg list-installed | grep -q "^$1 "
-            ;;
-        *)
-            apk info -e "$1" >/dev/null 2>&1
-            ;;
-    esac
+    if echo "$PKG_INSTALL" | grep -q "opkg"; then
+        opkg list-installed | grep -q "^$1 "
+    else
+        apk info -e "$1" >/dev/null 2>&1
+    fi
 }
 
 # 安装单个官方源包
 install_pkg_official() {
     local pkg=$(echo "$1" | xargs)
     [ -z "$pkg" ] && return 1
-    
     log "  安装 $pkg..."
-    
     $PKG_INSTALL "$pkg" >>"$LOG_FILE" 2>&1 || { log "  ✗ $pkg 安装失败"; return 1; }
-    
     log "  ✓ $pkg 安装成功"
     INSTALLED_PACKAGES="$INSTALLED_PACKAGES $pkg"
-    
     local lang=""
     case "$pkg" in
         luci-app-*) lang="luci-i18n-${pkg#luci-app-}-zh-cn" ;;
         luci-theme-*) lang="luci-i18n-theme-${pkg#luci-theme-}-zh-cn" ;;
         *) return 0 ;;
     esac
-    
     is_installed "$lang" && return 0
-    
     local lang_exists=0
     case 1 in
         $(echo "$PKG_INSTALL" | grep -q "opkg"; echo $?))
@@ -250,50 +246,35 @@ install_pkg_official() {
             apk search "$lang" 2>/dev/null | grep -q "^$lang" && lang_exists=1
             ;;
     esac
-    
     [ $lang_exists -eq 1 ] && {
         $PKG_INSTALL "$lang" >>"$LOG_FILE" 2>&1 && log "  ✓ $lang 安装成功"
     }
-    
     return 0
 }
 
 # 从官方源批量安装包
 install_official() {
     local pkg_list="$1"
-    
     log "步骤: 从官方源安装"
-    
     [ -z "$pkg_list" ] && { log "没有需要安装的包"; return 0; }
-    
     log "包列表: $(echo $pkg_list | wc -w) 个"
-
     local ok=0 fail=0 skip=0 failed_list=""
-    
     for pkg in $pkg_list; do
         pkg=$(echo "$pkg" | xargs)
         [ -z "$pkg" ] && continue
-        
-        case 1 in
-            $(is_installed "$pkg"; echo $?))
-                log "⊝ $pkg 已安装"
-                skip=$((skip + 1))
-                ;;
-            $(install_pkg_official "$pkg"; echo $?))
-                ok=$((ok + 1))
-                ;;
-            *)
-                failed_list="$failed_list $pkg"
-                fail=$((fail + 1))
-                ;;
-        esac
+        if is_installed "$pkg"; then
+            log "⊝ $pkg 已安装"
+            skip=$((skip + 1))
+        elif install_pkg_official "$pkg"; then
+            ok=$((ok + 1))
+        else
+            failed_list="$failed_list $pkg"
+            fail=$((fail + 1))
+        fi
     done
-    
     PENDING_PACKAGES=$(echo "$failed_list" | xargs)
-    
     log "安装完成: 成功 $ok, 失败 $fail, 跳过 $skip"
     [ -n "$PENDING_PACKAGES" ] && log "失败包: $PENDING_PACKAGES"
-    
     return 0
 }
 
@@ -301,22 +282,29 @@ install_official() {
 download_auto_update() {
     log "下载 auto-update.sh..."
     mkdir -p /usr/bin/
-
     for url in $SCRIPT_URLS; do
         local update_url=$(echo "$url" | sed 's/auto-setup$/auto-update.sh/')
-
-        if curl -fsSL -o "$UPDATE_PATH" -H "User-Agent: $USER_AGENT" "$update_url" 2>/dev/null; then
-            if grep -q "SCRIPT_VERSION" "$UPDATE_PATH" && grep -q "run_update" "$UPDATE_PATH"; then
-                chmod +x "$UPDATE_PATH"
-                log "✓ 下载成功"
-                return 0
-            fi
-        fi
-
-        rm -f "$UPDATE_PATH"
-        log "✗ auto-update.sh 下载失败 $update_url"
+        
+        curl -fsSL -o "$UPDATE_PATH" -H "User-Agent: $USER_AGENT" "$update_url" 2>/dev/null || {
+            rm -f "$UPDATE_PATH"
+            log "✗ auto-update.sh 下载失败 $update_url"
+            continue
+        }
+        [ -f "$UPDATE_PATH" ] && [ -s "$UPDATE_PATH" ] || {
+            rm -f "$UPDATE_PATH"
+            log "✗ auto-update.sh 文件无效 $update_url"
+            continue
+        }
+        grep -q "SCRIPT_VERSION" "$UPDATE_PATH" && grep -q "run_update" "$UPDATE_PATH" || {
+            rm -f "$UPDATE_PATH"
+            log "✗ auto-update.sh 内容验证失败 $update_url"
+            continue
+        }
+        chmod +x "$UPDATE_PATH"
+        local size=$(wc -c < "$UPDATE_PATH" 2>/dev/null | tr -d ' ')
+        log "✓ 下载成功 ($size 字节)"
+        return 0
     done
-
     log "✗ 所有源均下载失败"
     return 1
 }
@@ -324,13 +312,8 @@ download_auto_update() {
 # 调用 auto-update.sh 进行第三方源安装
 call_third_party_install() {
     local packages="$1"
-    
     log "调用第三方源安装..."
-    log ""
-    
     "$UPDATE_PATH" install $packages 2>&1 | tee -a "$LOG_FILE"
-    
-    log ""
     THIRD_PARTY_INSTALLED_LIST=$(grep "^THIRD_PARTY_INSTALLED=" /etc/auto-setup.conf 2>/dev/null | cut -d'"' -f2)
 }
 
@@ -348,15 +331,12 @@ setup_crontab() {
         [ -n "$CRON_TIME" ] && log "  ⚠ CRON_TIME 格式错误: $CRON_TIME"
         return 0
     }
-    
     log "配置自动更新: $CRON_TIME"
-    
     (crontab -l 2>/dev/null | grep -v "$UPDATE_PATH"; echo "$CRON_TIME $UPDATE_PATH") | crontab - && {
         log "✓ 定时任务已添加"
         "$UPDATE_PATH" ts &
         return 0
     }
-    
     log "✗ 定时任务添加失败，命令: $CRON_TIME $UPDATE_PATH"
     return 1
 }
@@ -364,23 +344,18 @@ setup_crontab() {
 # 删除安装脚本
 remove_self() {
     log "删除安装脚本..."
-    
     /etc/init.d/auto-setup disable 2>/dev/null
     /etc/init.d/auto-setup-fetch disable 2>/dev/null
     rm -f /etc/rc.d/S99auto-setup /etc/rc.d/K01auto-setup 2>/dev/null
     rm -f /etc/rc.d/S99auto-setup-fetch 2>/dev/null
     rm -f /etc/init.d/auto-setup /etc/init.d/auto-setup-fetch 2>/dev/null
-    
     sleep 2
-    
     [ ! -f "/etc/init.d/auto-setup" ] && [ ! -f "/etc/init.d/auto-setup-fetch" ] || {
         local remaining=$(ls /etc/init.d/auto-setup* 2>/dev/null | xargs)
         log "⚠ 脚本删除不完整，残留文件: $remaining"
         return 1
     }
-    
     log "✓ 脚本已删除"
-    
     echo " $INSTALLED_PACKAGES $THIRD_PARTY_INSTALLED_LIST " | grep -q " luci-proto-wireguard " && {
         log "检测到 luci-proto-wireguard，10秒后重启..."
         sleep 10
@@ -393,44 +368,63 @@ run_install() {
     case "$INSTALL_PRIORITY" in
         1)
             log "策略: 官方源优先"
-            log ""
-            
             PENDING_PACKAGES="$PACKAGES"
             install_official "$PENDING_PACKAGES"
-            
             [ -n "$PENDING_PACKAGES" ] && {
-                log ""
-                download_auto_update || return 0
-                call_third_party_install "$PENDING_PACKAGES"
+                local uninstalled=""
+                for pkg in $PENDING_PACKAGES; do
+                    is_installed "$pkg" && {
+                        log "⊝ $pkg 已安装，跳过第三方源"
+                    } || {
+                        uninstalled="$uninstalled $pkg"
+                    }
+                done
+                uninstalled=$(echo "$uninstalled" | xargs)
+                [ -n "$uninstalled" ] && {
+                    download_auto_update || return 0
+                    call_third_party_install "$uninstalled"
+                } || {
+                    log "所有失败包已安装，跳过第三方源"
+                }
             }
             ;;
         *)
             log "策略: 第三方源优先"
-            log ""
+            local uninstalled=""
+            local skip_count=0
+            for pkg in $PACKAGES; do
+                is_installed "$pkg" && {
+                    log "⊝ $pkg 已安装"
+                    skip_count=$((skip_count + 1))
+                } || {
+                    uninstalled="$uninstalled $pkg"
+                }
+            done
+            uninstalled=$(echo "$uninstalled" | xargs)
             
+            [ -z "$uninstalled" ] && {
+                log "所有包已安装 (跳过 $skip_count 个)"
+                return 0
+            }
+            log "需要安装: $(echo $uninstalled | wc -w) 个，已安装: $skip_count 个"
             download_auto_update || {
                 log "改用官方源"
-                PENDING_PACKAGES="$PACKAGES"
+                PENDING_PACKAGES="$uninstalled"
                 install_official "$PENDING_PACKAGES"
                 return 0
             }
-            
-            call_third_party_install "$PACKAGES"
-            
+            call_third_party_install "$uninstalled"
             local remaining=""
-            for pkg in $PACKAGES; do
+            for pkg in $uninstalled; do
                 echo " $THIRD_PARTY_INSTALLED_LIST " | grep -q " $pkg " || remaining="$remaining $pkg"
             done
             remaining=$(echo "$remaining" | xargs)
-            
             [ -n "$remaining" ] && {
-                log ""
                 PENDING_PACKAGES="$remaining"
                 install_official "$PENDING_PACKAGES"
             }
             ;;
     esac
-    
     FAILED_PACKAGES="$PENDING_PACKAGES"
 }
 
@@ -438,33 +432,18 @@ run_install() {
 run_setup() {
     log "开始自动配置 (PID: $$)"
     log "日志: $LOG_FILE"
-    log ""
-    
     read_fetch_config
     convert_urls_to_sources
     generate_config
-    
     detect_package_manager
     init_arch
     save_system_info
-    
-    log ""
     $PKG_UPDATE >>"$LOG_FILE" 2>&1 && log "✓ 软件源已更新" || log "⚠ 软件源更新失败，命令: $PKG_UPDATE"
-    
-    log ""
     run_install
-    
-    log ""
     [ -z "$FAILED_PACKAGES" ] && log "✓ 所有包安装成功" || log "⚠ 安装失败: $FAILED_PACKAGES"
-    
-    log ""
     log "日志: $LOG_FILE"
-    
     [ -z "$FAILED_PACKAGES" ] || { log "⚠ 保留脚本等待重试"; return 0; }
-    
-    log ""
     setup_crontab
-    log ""
     remove_self
 }
 
