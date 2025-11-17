@@ -344,8 +344,6 @@ setup_crontab() {
 # 删除安装脚本
 remove_self() {
     log "删除安装脚本..."
-    /etc/init.d/auto-setup disable 2>/dev/null
-    /etc/init.d/auto-setup-fetch disable 2>/dev/null
     rm -f /etc/rc.d/S99auto-setup /etc/rc.d/K01auto-setup 2>/dev/null
     rm -f /etc/rc.d/S99auto-setup-fetch 2>/dev/null
     rm -f /etc/init.d/auto-setup /etc/init.d/auto-setup-fetch 2>/dev/null
