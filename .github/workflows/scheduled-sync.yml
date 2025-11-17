@@ -1,0 +1,52 @@
+name: Scheduled Sync Tasks
+
+on:
+  schedule:
+    - cron: '0 19 * * *'
+  workflow_dispatch:
+env:
+  DEFAULT_BRANCH: 'main'
+
+jobs:
+  trigger-workflows:
+    runs-on: ubuntu-latest
+    strategy:
+      # 设置为 false 可以并行触发，true 则串行执行
+      max-parallel: 1
+      # 某个失败不影响其他的
+      fail-fast: false
+      matrix:
+        workflow:
+          - sync-upstream-releases.yml
+          - openlist.yml
+          
+    
+    steps:
+      - name: Trigger ${{ matrix.workflow }}
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const workflow = '${{ matrix.workflow }}';
+            const branch = '${{ env.DEFAULT_BRANCH }}';
+            
+            console.log(`🚀 触发工作流: ${workflow}`);
+            console.log(`🌿 目标分支: ${branch}`);
+            
+            try {
+              await github.rest.actions.createWorkflowDispatch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: workflow,
+                ref: branch
+              });
+              console.log(`✅ 成功触发: ${workflow}`);
+            } catch (error) {
+              console.error(`❌ 触发失败: ${workflow}`);
+              console.error(`错误信息: ${error.message}`);
+              throw error;
+            }
+      
+      - name: Wait interval
+        if: matrix.workflow != 'openlist.yml'
+        run: sleep 10
