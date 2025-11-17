@@ -4,7 +4,7 @@ START=99
 STOP=01
 
 # 脚本配置
-PACKAGES="luci-app-wechatpush luci-app-passwall2 luci-app-openlist luci-app-filemanager luci-i18n-package-manager-zh-cn luci-i18n-firewall-zh-cn vsftpd openssh-sftp-server luci-app-ttyd lucky tailscale luci-theme-aurora"
+PACKAGES="luci-app-wechatpush luci-app-passwall2 luci-app-filemanager luci-i18n-package-manager-zh-cn luci-i18n-firewall-zh-cn vsftpd openssh-sftp-server luci-app-ttyd lucky tailscale luci-theme-aurora openlist2 luci-app-OpenClash"
 UPDATE_PATH="/usr/bin/auto-update.sh"
 
 # 运行时变量
