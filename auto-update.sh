@@ -1,7 +1,7 @@
 #!/bin/sh
 
 SCRIPT_VERSION="2.2.0"
-LOG_FILE="/tmp/auto-update.log"  # ✅ 固定文件名，每次覆盖
+LOG_FILE="/tmp/auto-update.log"
 CONFIG_FILE="/etc/auto-setup.conf"
 DEVICE_MODEL="$(cat /tmp/sysinfo/model 2>/dev/null || echo '未知设备')"
 PUSH_TITLE="$DEVICE_MODEL 插件更新通知"
