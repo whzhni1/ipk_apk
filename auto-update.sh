@@ -16,12 +16,14 @@ for var in OFFICIAL_UPDATED OFFICIAL_SKIPPED OFFICIAL_FAILED THIRDPARTY_UPDATED 
     eval "$var=0"
 done
 
+# 日志函数
 log() {
     local msg="[$(date '+%Y-%m-%d %H:%M:%S')] $1"
     echo "$msg" | tee -a "$LOG_FILE"
     logger -t "auto-update" "$1" 2>/dev/null || true
 }
 
+# 加载配置
 load_config() {
     [ ! -f "$CONFIG_FILE" ] && { log "✗ 配置文件不存在"; return 1; }
     . "$CONFIG_FILE"
@@ -33,6 +35,7 @@ load_config() {
     log "✓ 配置已加载"
 }
 
+# 解析源配置
 parse_source_config() {
     platform=$(echo "$1" | cut -d'|' -f1)
     repo=$(echo "$1" | cut -d'|' -f2)
@@ -40,6 +43,7 @@ parse_source_config() {
     owner=$(echo "$repo" | cut -d'/' -f1)
 }
 
+# 工具函数
 to_lower() { echo "$1" | tr 'A-Z' 'a-z'; }
 normalize_version() { echo "$1" | sed 's/^[vV]//' | sed 's/[-_].*//'; }
 format_size() {
@@ -49,12 +53,14 @@ format_size() {
     echo "$b 字节"
 }
 
+# 版本比较
 version_greater() {
     local v1=$(normalize_version "$1") v2=$(normalize_version "$2")
     [ "$v1" = "$v2" ] && return 1
     [ "$(printf '%s\n%s\n' "$v1" "$v2" | sort -V | tail -1)" = "$v1" ]
 }
 
+# 验证下载文件
 validate_file() {
     local file="$1" min="${2:-1024}"
     [ ! -f "$file" ] || [ ! -s "$file" ] && { log "  ✗ 文件无效"; return 1; }
@@ -68,66 +74,37 @@ validate_file() {
     log "  ✓ 文件有效: $(format_size $size)"
 }
 
-# 获取token
-get_token_for_platform() {
-    case "$1" in
-        gitee) echo "$GITEE_TOKEN" ;;
-        gitcode) echo "$GITCODE_TOKEN" ;;
-        *) echo "" ;;
-    esac
-}
-
-# 获取最新Release（恢复原始逻辑）
-api_get_latest_release() {
+# API 调用
+api_get_release() {
     local platform="$1" owner="$2" repo="$3"
-    local token=$(get_token_for_platform "$platform")
-    local api_url=""
+    local token=""
     
     case "$platform" in
-        gitee)
-            api_url="https://gitee.com/api/v5/repos/${owner}/${repo}/releases"
-            if [ -n "$token" ]; then
-                curl -s -H "Authorization: token $token" "$api_url"
-            else
-                curl -s "$api_url"
-            fi
-            ;;
-        gitcode)
-            api_url="https://gitcode.com/api/v5/repos/${owner}/${repo}/releases"
-            if [ -z "$token" ]; then
-                echo "[]"
-                return 1
-            fi
-            curl -s -H "Authorization: Bearer $token" "$api_url"
-            ;;
+        gitee) token="$GITEE_TOKEN" ;;
+        gitcode) token="$GITCODE_TOKEN"; [ -z "$token" ] && return 1 ;;
         *) return 1 ;;
     esac
+    
+    local url="https://${platform}.com/api/v5/repos/${owner}/${repo}/releases"
+    [ -n "$token" ] && curl -s -H "Authorization: Bearer $token" "$url" || curl -s "$url"
 }
 
-# 提取文件名（保存完整JSON）
+# 提取文件名
 extract_filenames() {
-    local json_data="$1"
-    ASSETS_JSON_CACHE="$json_data"
-    
-    local files=""
-    case "$PKG_EXT" in
-        .ipk) files=$(echo "$json_data" | grep -o '"name":"[^"]*\.ipk"' | cut -d'"' -f4) ;;
-        .apk) files=$(echo "$json_data" | grep -o '"name":"[^"]*\.apk"' | cut -d'"' -f4) ;;
-        *) log "  ✗ 不支持的包格式: $PKG_EXT"; return 1 ;;
-    esac
-    
+    ASSETS_JSON_CACHE="$1"
+    local pattern=$([ "$PKG_EXT" = ".ipk" ] && echo "\.ipk" || echo "\.apk")
+    local files=$(echo "$1" | grep -o "\"name\":\"[^\"]*${pattern}\"" | cut -d'"' -f4)
     [ -z "$files" ] && { log "  ✗ 未找到 $PKG_EXT 文件"; return 1; }
     log "  找到 $(echo "$files" | wc -l) 个文件"
     echo "$files"
 }
 
-# 获取下载地址（原始逻辑）
+# 获取下载地址
 get_download_url() {
-    local filename="$1"
-    local url=$(echo "$ASSETS_JSON_CACHE" | grep -o "https://[^\"]*${filename}" | head -1)
-    echo "$url" | sed 's|https://api\.gitcode\.com/|https://gitcode.com/|'
+    echo "$ASSETS_JSON_CACHE" | grep -o "https://[^\"]*$1" | head -1 | sed 's|api\.gitcode\.com/|gitcode.com/|'
 }
 
+# 下载并安装
 download_and_install() {
     local file="$1"
     local url=$(get_download_url "$file")
@@ -149,6 +126,7 @@ download_and_install() {
     }
 }
 
+# 匹配文件名
 match_file() {
     local file="$1" app="$2" type="$3" arch="${4:-}"
     local fl=$(to_lower "$file") al=$(to_lower "$app")
@@ -167,6 +145,7 @@ match_file() {
     esac
 }
 
+# 查找并安装
 find_and_install() {
     local files="$1" app="$2" type="$3"
     local IFS=$'\n'
@@ -193,6 +172,7 @@ find_and_install() {
     return 1
 }
 
+# 处理单个包
 process_package() {
     local pkg="$1" check_ver="${2:-0}" cur_ver="$3"
     log "处理包: $pkg"
@@ -203,7 +183,7 @@ process_package() {
         parse_source_config "$src"
         log "  平台: $platform ($owner/$pkg)"
         
-        local json=$(api_get_latest_release "$platform" "$owner" "$pkg")
+        local json=$(api_get_release "$platform" "$owner" "$pkg")
         echo "$json" | grep -q '\[' || { log "  ✗ API调用失败"; continue; }
         
         local ver=$(echo "$json" | grep -o '"tag_name":"[^"]*"' | head -1 | cut -d'"' -f4)
@@ -234,6 +214,7 @@ process_package() {
     return 1
 }
 
+# 保存第三方包列表
 save_third_party() {
     [ ! -f "$CONFIG_FILE" ] && return
     local old=$(sed -n 's/^THIRD_PARTY_INSTALLED="\(.*\)"/\1/p' "$CONFIG_FILE")
@@ -246,6 +227,7 @@ save_third_party() {
     log "✓ 配置已更新"
 }
 
+# install 模式（auto-setup 已过滤已安装，这里不再检查）
 run_install() {
     log "第三方源安装模式"
     log "包列表: $*"
@@ -273,10 +255,17 @@ run_install() {
     log ""
     log "安装汇总: 成功 $success, 失败 $failed"
     
+    if [ $success -gt 0 ] || [ $failed -gt 0 ]; then
+        generate_report "install"
+        log ""
+        echo "$REPORT"
+        send_push "$DEVICE_MODEL - 包安装结果" "$REPORT"
+    fi
+    
     [ $failed -eq 0 ]
 }
 
-# 以下是 update 模式的函数（省略，和之前一样）
+# update 模式需要检查已安装
 is_installed() {
     $PKG_LIST_INSTALLED 2>/dev/null | grep -q "^$1 "
 }
@@ -306,6 +295,7 @@ install_lang() {
     $PKG_INSTALL "$lang" >>"$LOG_FILE" 2>&1 && log "    ✓ $lang 安装成功"
 }
 
+# 分类包
 classify_packages() {
     log "步骤: 分类已安装的包"
     $PKG_UPDATE >>"$LOG_FILE" 2>&1 || { log "✗ 更新源失败"; return 1; }
@@ -330,6 +320,7 @@ classify_packages() {
     log "包分类: 官方 $(echo $OFFICIAL_PACKAGES|wc -w), 第三方 $(echo $NON_OFFICIAL_PACKAGES|wc -w), 排除 $excluded"
 }
 
+# 更新官方包
 update_official() {
     log "步骤: 更新官方源"
     
@@ -357,6 +348,7 @@ update_official() {
     log "官方源: 升级 $OFFICIAL_UPDATED, 最新 $OFFICIAL_SKIPPED, 失败 $OFFICIAL_FAILED"
 }
 
+# 更新第三方包
 update_thirdparty() {
     log "步骤: 更新第三方源"
     
@@ -388,6 +380,7 @@ update_thirdparty() {
     log "第三方源: 更新 $THIRDPARTY_UPDATED, 最新 $THIRDPARTY_SAME, 失败 $THIRDPARTY_FAILED"
 }
 
+# 检查脚本更新
 check_script_update() {
     log "当前版本: $SCRIPT_VERSION"
     local tmp="/tmp/auto-update-new.sh"
@@ -416,6 +409,7 @@ check_script_update() {
     done
 }
 
+# 推送
 send_push() {
     [ ! -f "/etc/config/wechatpush" ] && return
     [ "$(uci get wechatpush.config.enable 2>/dev/null)" != "1" ] && return
@@ -451,6 +445,7 @@ send_push() {
     esac
 }
 
+# 生成报告
 generate_report() {
     local mode="$1"
     local cron=$(crontab -l 2>/dev/null | grep "auto-update.sh" | grep -v "^#" | head -1)
@@ -483,6 +478,7 @@ generate_report() {
     REPORT="${REPORT}\n详细日志: $LOG_FILE"
 }
 
+# update 模式
 run_update() {
     > "$LOG_FILE"
     log "OpenWrt 自动更新 v$SCRIPT_VERSION"
