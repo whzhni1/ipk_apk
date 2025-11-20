@@ -89,19 +89,48 @@ api_get_release() {
     [ -n "$token" ] && curl -s -H "Authorization: Bearer $token" "$url" || curl -s "$url"
 }
 
-# 提取文件名
-extract_filenames() {
-    ASSETS_JSON_CACHE="$1"
-    local pattern=$([ "$PKG_EXT" = ".ipk" ] && echo "\.ipk" || echo "\.apk")
-    local files=$(echo "$1" | grep -o "\"name\":\"[^\"]*${pattern}\"" | cut -d'"' -f4)
-    [ -z "$files" ] && { log "  ✗ 未找到 $PKG_EXT 文件"; return 1; }
-    log "  找到 $(echo "$files" | wc -l) 个文件"
-    echo "$files"
+# 查找并安装
+find_and_install() {
+    local app="$1"
+    
+    # 1. 列出所有 PKG_EXT 文件
+    local all_files=$(echo "$ASSETS_JSON_CACHE" | grep -o "\"[^\"]*${PKG_EXT}\"" | tr -d '"' | grep -v "/")
+    [ -z "$all_files" ] && { log "  ✗ 未找到文件"; return 1; }
+    log "  共 $(echo "$all_files" | wc -l) 个文件"
+    
+    local count=0
+    local al=$(to_lower "$app")
+    
+    # 2. 查找架构包（SYS_ARCH → ARCH_FALLBACK）
+    for arch in $SYS_ARCH $ARCH_FALLBACK; do
+        local file=$(echo "$all_files" | grep -v "^luci-" | grep -i "$al" | grep "$arch" | head -1)
+        [ -n "$file" ] && {
+            log "  [架构包] $file"
+            download_and_install "$file" && count=$((count+1))
+            break
+        }
+    done
+    
+    # 3. 查找 luci 包
+    local file=$(echo "$all_files" | grep -E "^luci-(app|theme)-${al}[-_]" | head -1)
+    [ -n "$file" ] && {
+        log "  [Luci包] $file"
+        download_and_install "$file" && count=$((count+1))
+    }
+    
+    # 4. 查找 zh-cn 语言包
+    local file=$(echo "$all_files" | grep "zh-cn" | grep -i "$al" | head -1)
+    [ -n "$file" ] && {
+        log "  [语言包] $file"
+        download_and_install "$file" && count=$((count+1))
+    }
+    
+    [ $count -gt 0 ]
 }
 
 # 获取下载地址
 get_download_url() {
-    echo "$ASSETS_JSON_CACHE" | grep -o "https://[^\"]*$1" | head -1 | sed 's|api\.gitcode\.com/|gitcode.com/|'
+    echo "$ASSETS_JSON_CACHE" | grep -o "https://[^\"]*$1" | head -1 | sed 's/api\.gitcode/gitcode/g'
 }
 
 # 下载并安装
@@ -124,52 +153,6 @@ download_and_install() {
         log "    ✗ 安装失败: $(tail -1 "$LOG_FILE" | grep -v '^\[')"
         return 1
     }
-}
-
-# 匹配文件名
-match_file() {
-    local file="$1" app="$2" type="$3" arch="${4:-}"
-    local fl=$(to_lower "$file") al=$(to_lower "$app")
-    
-    case "$type" in
-        arch)
-            echo "$fl" | grep -q "^luci-" && return 1
-            echo "$fl" | grep -q "$arch" && echo "$fl" | grep -q "$al"
-            ;;
-        luci)
-            echo "$fl" | grep -Eq "^luci-(app|theme)-${al}[-_].*${PKG_EXT}$"
-            ;;
-        lang)
-            echo "$fl" | grep -Eq "luci-i18n-.*${al}.*(zh-cn|zh_cn).*${PKG_EXT}$"
-            ;;
-    esac
-}
-
-# 查找并安装
-find_and_install() {
-    local files="$1" app="$2" type="$3"
-    local IFS=$'\n'
-    
-    for file in $files; do
-        [ -z "$file" ] && continue
-        
-        if [ "$type" = "arch" ]; then
-            for arch in $ARCH_FALLBACK; do
-                match_file "$file" "$app" "arch" "$arch" && {
-                    log "  [架构包] $file ($arch)"
-                    download_and_install "$file" && return 0
-                }
-            done
-        else
-            match_file "$file" "$app" "$type" && {
-                local label=$([ "$type" = "luci" ] && echo "Luci包" || echo "语言包")
-                log "  [$label] $file"
-                download_and_install "$file" && return 0
-            }
-        fi
-    done
-    
-    return 1
 }
 
 # 处理单个包
@@ -196,17 +179,9 @@ process_package() {
         fi
         
         echo "$json" | grep -q '"assets"' || { log "  ✗ 无资源文件"; continue; }
-        
-        local files=$(extract_filenames "$json") || continue
-        local count=0
-        
-        find_and_install "$files" "$app" "arch" && count=$((count+1))
-        find_and_install "$files" "$app" "luci" && count=$((count+1))
-        find_and_install "$files" "$app" "lang" && count=$((count+1))
-        
-        ASSETS_JSON_CACHE=""
-        
-        [ $count -gt 0 ] && { log "  ✓ 安装成功 ($count 个文件)"; return 0; }
+
+        ASSETS_JSON_CACHE="$json"
+        find_and_install "$app" && { log "  ✓ 安装成功"; return 0; }
         log "  ✗ 无匹配文件"
     done
     
@@ -227,7 +202,7 @@ save_third_party() {
     log "✓ 配置已更新"
 }
 
-# install 模式（auto-setup 已过滤已安装，这里不再检查）
+# install 模式
 run_install() {
     log "第三方源安装模式"
     log "包列表: $*"
