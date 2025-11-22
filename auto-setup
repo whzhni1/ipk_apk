@@ -3,12 +3,12 @@
 START=99
 STOP=01
 
-DEFAULT_PACKAGES="luci-app-wechatpush luci-app-filemanager luci-i18n-package-manager-zh-cn luci-i18n-firewall-zh-cn vsftpd openssh-sftp-server luci-app-ttyd lucky tailscale luci-theme-aurora openlist2 luci-app-openclash luci-app-passwall2"
+DEFAULT_PACKAGES="luci-app-wechatpush luci-app-passwall2 luci-app-filemanager luci-i18n-package-manager-zh-cn luci-i18n-firewall-zh-cn vsftpd openssh-sftp-server luci-app-ttyd lucky tailscale luci-theme-aurora openlist2 luci-app-OpenClash"
 UPDATE_PATH="/usr/bin/auto-update.sh"
 LOG_FILE="/tmp/auto-setup-$$.log"
 
 # 批量初始化变量
-for var in CRON_TIME INSTALL_PRIORITY GITEE_TOKEN GITCODE_TOKEN PACKAGES SCRIPT_URLS API_SOURCES SYS_ARCH ARCH_FALLBACK PKG_TYPE PKG_EXT PKG_INSTALL PKG_UPDATE PKG_LIST_INSTALLED PKG_LIST PKG_INFO INSTALLED_PACKAGES PENDING_PACKAGES FAILED_PACKAGES THIRD_PARTY_INSTALLED UNINSTALLED_PACKAGES REMAINING_PACKAGES; do
+for var in CRON_TIME INSTALL_PRIORITY GITEE_TOKEN GITCODE_TOKEN PACKAGES SCRIPT_URLS SYS_ARCH ARCH_FALLBACK PKG_TYPE PKG_EXT PKG_INSTALL PKG_UPDATE PKG_LIST_INSTALLED PKG_LIST PKG_INFO INSTALLED_PACKAGES PENDING_PACKAGES FAILED_PACKAGES THIRD_PARTY_INSTALLED UNINSTALLED_PACKAGES REMAINING_PACKAGES; do
     eval "$var=''"
 done
 
@@ -35,44 +35,12 @@ read_fetch_config() {
     PACKAGES=$([ -n "$pkg" ] && echo "$pkg" || echo "$DEFAULT_PACKAGES")
     [ -z "$pkg" ] && log "  使用默认包列表"
     
-    SCRIPT_URLS=$(sed -n '/^SCRIPT_URLS="/,/"$/p' "$script" | grep -v '^SCRIPT_URLS=' | grep -v '^"$' | grep 'http' | xargs)
-    
+    SCRIPT_URLS=$(sed -n '/^SCRIPT_URLS="/,/"$/p' "$script" | grep -v '^SCRIPT_URLS=' | grep -v '^"$')
+
     log "✓ 配置读取完成"
     log "  CRON_TIME: ${CRON_TIME:-未设置}"
     log "  INSTALL_PRIORITY: ${INSTALL_PRIORITY:-1}"
     log "  包数量: $(echo $PACKAGES | wc -w) 个"
-}
-
-# 解析 Git URL
-parse_git_url() {
-    case "$1" in
-        *gitcode.com*|*gitee.com*)
-            local platform=$(echo "$1" | sed -n 's|.*//\([^.]*\)\..*|\1|p')
-            local repo=$(echo "$1" | sed 's|https\?://[^/]*/\([^/]*/[^/]*\)/.*|\1|')
-            local branch=$(echo "$1" | sed 's|.*/raw/\([^/]*\)/.*|\1|')
-            [ -n "$platform" ] && [ -n "$repo" ] && [ -n "$branch" ] && echo "${platform}|${repo}|${branch}"
-            ;;
-    esac
-}
-
-# 转换源地址
-convert_urls_to_sources() {
-    log "转换源地址..."
-    API_SOURCES=""
-    
-    for url in $SCRIPT_URLS; do
-        local src=$(parse_git_url "$(echo "$url" | sed 's|raw\.gitcode|gitcode|')")
-        [ -n "$src" ] && API_SOURCES="$API_SOURCES $src"
-    done
-    
-    API_SOURCES=$(echo "$API_SOURCES" | xargs)
-    
-    [ -z "$API_SOURCES" ] && {
-        log "⚠ 无有效源，使用默认"
-        API_SOURCES="gitee|whzhni/ipk_apk|main gitcode|whzhni/ipk_apk|main"
-    }
-    
-    log "✓ API源: $(echo $API_SOURCES | wc -w) 个"
 }
 
 # 生成配置文件
@@ -81,14 +49,12 @@ generate_config() {
     log "生成配置: $conf"
     
     cat > "$conf" <<EOF
-# OpenWrt 自动配置文件
-# 生成时间: $(date '+%Y-%m-%d %H:%M:%S')
 
 CRON_TIME="${CRON_TIME}"
 INSTALL_PRIORITY="${INSTALL_PRIORITY:-1}"
 GITEE_TOKEN="${GITEE_TOKEN}"
 GITCODE_TOKEN="${GITCODE_TOKEN}"
-API_SOURCES="${API_SOURCES}"
+SCRIPT_URLS="${SCRIPT_URLS}"
 EOF
     
     [ -f "$conf" ] && log "✓ 配置已生成" || { log "✗ 配置生成失败"; return 1; }
@@ -437,7 +403,7 @@ run_setup() {
     log "日志: $LOG_FILE"
     
     read_fetch_config
-    convert_urls_to_sources
+    
     generate_config || return 1
     detect_package_manager || return 1
     init_arch
