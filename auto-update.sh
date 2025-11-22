@@ -49,7 +49,6 @@ parse_git_info() {
 }
 
 # 工具函数
-to_lower() { echo "$1" | tr 'A-Z' 'a-z'; }
 normalize_version() { echo "$1" | sed 's/^[vV]//' | sed 's/[-_].*//'; }
 format_size() {
     local b="$1"
@@ -68,15 +67,15 @@ version_greater() {
 # 验证下载文件
 validate_file() {
     local file="$1" min="${2:-1024}"
-    [ ! -f "$file" ] || [ ! -s "$file" ] && { log "  ✗ 文件无效"; return 1; }
+    [ ! -f "$file" ] || [ ! -s "$file" ] && { log "✗ 文件无效"; return 1; }
     
     local size=$(wc -c < "$file" | tr -d ' ')
     [ $size -lt $min ] && head -1 "$file" | grep -qi "<!DOCTYPE\|<html" && {
-        log "  ✗ 下载的是HTML"
+        log "✗ 下载的是HTML"
         return 1
     }
     
-    log "  ✓ 文件有效: $(format_size $size)"
+    log "✓ 文件有效: $(format_size $size)"
 }
 
 # API 调用
@@ -99,14 +98,13 @@ find_and_install() {
     local app="$1"
 
     local all_files=$(echo "$ASSETS_JSON_CACHE" | grep -o "\"[^\"]*${PKG_EXT}\"" | tr -d '"' | grep -v "/")
-    [ -z "$all_files" ] && { log "  ✗ 未找到文件"; return 1; }
+    [ -z "$all_files" ] && { log "✗ 未找到文件"; return 1; }
     log "  共 $(echo "$all_files" | wc -l) 个文件"
     
     local count=0
-    local al=$(to_lower "$app")
     
     for arch in $SYS_ARCH $ARCH_FALLBACK; do
-        local file=$(echo "$all_files" | grep -v "^luci-" | grep -i "$al" | grep "$arch" | head -1)
+        local file=$(echo "$all_files" | grep -v "^luci-" | grep -i "$app" | grep "$arch" | head -1)
         [ -n "$file" ] && {
             log "  [架构包] $file"
             download_and_install "$file" && count=$((count+1))
@@ -138,20 +136,20 @@ get_download_url() {
 download_and_install() {
     local file="$1"
     local url=$(get_download_url "$file")
-    [ -z "$url" ] && { log "    ✗ 无下载地址"; return 1; }
+    [ -z "$url" ] && { log "✗ 无下载地址"; return 1; }
     
     log "    下载: $file"
-    curl -fsSL -o "/tmp/$file" "$url" || { log "    ✗ 下载失败"; return 1; }
+    curl -fsSL -o "/tmp/$file" "$url" || { log "✗ 下载失败"; return 1; }
     
     validate_file "/tmp/$file" 10240 || { rm -f "/tmp/$file"; return 1; }
     
     log "    安装: $file"
     $PKG_INSTALL "/tmp/$file" >>"$LOG_FILE" 2>&1 && {
-        log "    ✓ 安装成功"
+        log "✓ 安装成功"
         rm -f "/tmp/$file"
         return 0
     } || {
-        log "    ✗ 安装失败: $(tail -1 "$LOG_FILE" | grep -v '^\[')"
+        log "✗ 安装失败: $(tail -1 "$LOG_FILE" | grep -v '^\[')"
         return 1
     }
 }
@@ -168,10 +166,10 @@ process_package() {
         log "  平台: $platform ($owner/$pkg)"
         
         local json=$(api_get_release "$platform" "$owner" "$pkg")
-        echo "$json" | grep -q '\[' || { log "  ✗ API调用失败"; continue; }
+        echo "$json" | grep -q '\[' || { log "✗ API调用失败"; continue; }
         
         local ver=$(echo "$json" | grep -o '"tag_name":"[^"]*"' | head -1 | cut -d'"' -f4)
-        [ -z "$ver" ] && { log "  ✗ 无版本信息"; continue; }
+        [ -z "$ver" ] && { log "✗ 无版本信息"; continue; }
         log "  最新版本: $ver"
         
         if [ "$check_ver" = "1" ]; then
@@ -179,11 +177,11 @@ process_package() {
             log "  发现更新: $cur_ver → $ver"
         fi
         
-        echo "$json" | grep -q '"assets"' || { log "  ✗ 无资源文件"; continue; }
+        echo "$json" | grep -q '"assets"' || { log "✗ 无资源文件"; continue; }
 
         ASSETS_JSON_CACHE="$json"
-        find_and_install "$app" && { log "  ✓ 安装成功"; return 0; }
-        log "  ✗ 无匹配文件"
+        find_and_install "$app" && { log "✓ 安装成功"; return 0; }
+        log "✗ 无匹配文件"
     done
     
     log "✗ 所有源均失败"
@@ -216,7 +214,7 @@ run_install() {
             THIRDPARTY_UPDATED=$((THIRDPARTY_UPDATED+1))
             INSTALLED_LIST="$INSTALLED_LIST $pkg"
         else
-            THIRDPARTY_DETAIL="${THIRDPARTY_DETAIL}\n✗$pkg"
+            THIRDPARTY_DETAIL="${THIRDPARTY_DETAIL}\n?$pkg"
             THIRDPARTY_FAILED=$((THIRDPARTY_FAILED+1))
             FAILED_LIST="$FAILED_LIST $pkg"
         fi
@@ -263,7 +261,7 @@ install_lang() {
     esac
     
     $PKG_LIST "$lang" 2>/dev/null | grep -q "^$lang " || return
-    $PKG_INSTALL "$lang" >>"$LOG_FILE" 2>&1 && log "    ✓ $lang 安装成功"
+    $PKG_INSTALL "$lang" >>"$LOG_FILE" 2>&1 && log "✓ $lang 安装成功"
 }
 
 # 分类包
@@ -273,23 +271,19 @@ classify_packages() {
     log "✓ 软件源已更新"
     
     local all=$($PKG_LIST_INSTALLED 2>/dev/null | awk '{print $1}' | grep -v "^luci-i18n-")
-    local third_lower=$(to_lower "$THIRD_PARTY_INSTALLED")
-    
-    [ -n "$THIRD_PARTY_INSTALLED" ] && log "第三方记录: $THIRD_PARTY_INSTALLED"
     
     for pkg in $all; do
-        is_excluded "$pkg" && { excluded=$((excluded+1)); continue; }  # ✅ 移到 case 前面
-        case " $third_lower " in
-            *" $(to_lower "$pkg") "*) NON_OFFICIAL_PACKAGES="$NON_OFFICIAL_PACKAGES $pkg" ;;
-            *) $PKG_LIST "$pkg" 2>/dev/null | grep -q "^$pkg " && \
-                   OFFICIAL_PACKAGES="$OFFICIAL_PACKAGES $pkg" || \
-                   NON_OFFICIAL_PACKAGES="$NON_OFFICIAL_PACKAGES $pkg" ;;
-        esac
+        is_excluded "$pkg" && { excluded=$((excluded+1)); continue; }
+        
+        case " $THIRD_PARTY_INSTALLED " in *" $pkg "*) NON_OFFICIAL_PACKAGES="$NON_OFFICIAL_PACKAGES $pkg"; continue ;; esac
+        
+        $PKG_INFO "$pkg" 2>/dev/null | grep -q "^Description:" && \
+            OFFICIAL_PACKAGES="$OFFICIAL_PACKAGES $pkg" || \
+            NON_OFFICIAL_PACKAGES="$NON_OFFICIAL_PACKAGES $pkg"
     done
     
     log "包分类: 官方 $(echo $OFFICIAL_PACKAGES|wc -w), 第三方 $(echo $NON_OFFICIAL_PACKAGES|wc -w), 排除 $excluded"
 }
-
 
 # 更新官方包
 update_official() {
@@ -302,13 +296,13 @@ update_official() {
         [ "$cur" != "$new" ] && [ -n "$new" ] && {
             log "↻ $pkg: $cur → $new"
             $PKG_INSTALL "$pkg" >>"$LOG_FILE" 2>&1 && {
-                log "  ✓ 升级成功"
+                log "✓ 升级成功"
                 OFFICIAL_DETAIL="${OFFICIAL_DETAIL}\n√$pkg: $cur → $new"
                 OFFICIAL_UPDATED=$((OFFICIAL_UPDATED+1))
                 install_lang "$pkg"
             } || {
-                log "  ✗ 升级失败"
-                OFFICIAL_DETAIL="${OFFICIAL_DETAIL}\n✗$pkg: $cur → $new"
+                log "✗ 升级失败"
+                OFFICIAL_DETAIL="${OFFICIAL_DETAIL}\n?$pkg: $cur → $new"
                 OFFICIAL_FAILED=$((OFFICIAL_FAILED+1))
             }
         } || {
@@ -326,37 +320,22 @@ update_thirdparty() {
     
     [ -z "$NON_OFFICIAL_PACKAGES" ] && { log "无第三方包"; return; }
     
-    local third_lower=$(to_lower "$THIRD_PARTY_INSTALLED")
-    local check=""
+    log "检查 $(echo $NON_OFFICIAL_PACKAGES|wc -w) 个第三方包"
     
     for pkg in $NON_OFFICIAL_PACKAGES; do
-        case " $third_lower " in
-            *" $(to_lower "$pkg") "*) check="$check $pkg" ;;
-        esac
-    done
-    
-    [ -z "$check" ] && { log "无第三方插件"; return; }
-    log "检查 $(echo $check|wc -w) 个第三方插件"
-    
-    for pkg in $check; do
-        local orig="$pkg"
-        for saved in $THIRD_PARTY_INSTALLED; do
-            [ "$(to_lower "$pkg")" = "$(to_lower "$saved")" ] && orig="$saved" && break
-        done
-        
         local cur=$(get_version "$pkg" installed)
-        log "🔍 $orig (当前: $cur)"
+        log "🔍 $pkg (当前: $cur)"
         
-        process_package "$orig" 1 "$cur"
+        process_package "$pkg" 1 "$cur"
         case $? in
             0) 
                 local new=$(get_version "$pkg" installed)
-                THIRDPARTY_DETAIL="${THIRDPARTY_DETAIL}\n√$orig: $cur → $new"
+                THIRDPARTY_DETAIL="${THIRDPARTY_DETAIL}\n[+]$pkg: $cur -> $new"
                 THIRDPARTY_UPDATED=$((THIRDPARTY_UPDATED+1)) 
                 ;;
             2) THIRDPARTY_SAME=$((THIRDPARTY_SAME+1)) ;;
             *) 
-                THIRDPARTY_DETAIL="${THIRDPARTY_DETAIL}\n✗$orig"
+                THIRDPARTY_DETAIL="${THIRDPARTY_DETAIL}\n[X]$pkg"
                 THIRDPARTY_FAILED=$((THIRDPARTY_FAILED+1)) 
                 ;;
         esac
