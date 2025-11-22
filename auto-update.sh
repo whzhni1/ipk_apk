@@ -1,6 +1,6 @@
 #!/bin/sh
 
-SCRIPT_VERSION="2.2.0"
+SCRIPT_VERSION="2.3.0"
 LOG_FILE="/tmp/auto-update.log"
 CONFIG_FILE="/etc/auto-setup.conf"
 DEVICE_MODEL="$(cat /tmp/sysinfo/model 2>/dev/null || echo '未知设备')"
@@ -27,7 +27,7 @@ log() {
 load_config() {
     [ ! -f "$CONFIG_FILE" ] && { log "✗ 配置文件不存在"; return 1; }
     . "$CONFIG_FILE"
-    
+
     for key in SYS_ARCH PKG_INSTALL PKG_UPDATE PKG_LIST_INSTALLED SCRIPT_URLS; do
         eval "[ -z \"\$$key\" ]" && { log "✗ 缺少配置: $key"; return 1; }
     done
@@ -160,10 +160,10 @@ download_and_install() {
 process_package() {
     local pkg="$1" check_ver="${2:-0}" cur_ver="$3"
     log "处理包: $pkg"
-    
+
     local app=$(echo "$pkg" | sed 's/^luci-app-//' | sed 's/^luci-theme-//')
     
-    for src in $SCRIPT_URLS; do
+    for url in $SCRIPT_URLS; do
         parse_git_info "$url"
         log "  平台: $platform ($owner/$pkg)"
         
@@ -278,19 +278,18 @@ classify_packages() {
     [ -n "$THIRD_PARTY_INSTALLED" ] && log "第三方记录: $THIRD_PARTY_INSTALLED"
     
     for pkg in $all; do
+        is_excluded "$pkg" && { excluded=$((excluded+1)); continue; }  # ✅ 移到 case 前面
         case " $third_lower " in
-            *" $(to_lower "$pkg") "*)
-                NON_OFFICIAL_PACKAGES="$NON_OFFICIAL_PACKAGES $pkg" ;;
-            *)
-                is_excluded "$pkg" && { excluded=$((excluded+1)); continue; }
-                $PKG_LIST "$pkg" 2>/dev/null | grep -q "^$pkg " && \
-                    OFFICIAL_PACKAGES="$OFFICIAL_PACKAGES $pkg" || \
-                    NON_OFFICIAL_PACKAGES="$NON_OFFICIAL_PACKAGES $pkg" ;;
+            *" $(to_lower "$pkg") "*) NON_OFFICIAL_PACKAGES="$NON_OFFICIAL_PACKAGES $pkg" ;;
+            *) $PKG_LIST "$pkg" 2>/dev/null | grep -q "^$pkg " && \
+                   OFFICIAL_PACKAGES="$OFFICIAL_PACKAGES $pkg" || \
+                   NON_OFFICIAL_PACKAGES="$NON_OFFICIAL_PACKAGES $pkg" ;;
         esac
     done
     
     log "包分类: 官方 $(echo $OFFICIAL_PACKAGES|wc -w), 第三方 $(echo $NON_OFFICIAL_PACKAGES|wc -w), 排除 $excluded"
 }
+
 
 # 更新官方包
 update_official() {
