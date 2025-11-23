@@ -20,7 +20,7 @@ API_BASE="${GITLAB_URL}/api/v4"
 REPO_PATH="${USERNAME}/${REPO_NAME}"
 PROJECT_PATH_ENCODED=""
 PROJECT_ID=""
-PACKAGE_NAME="release-files"  # Generic Package 名称
+PACKAGE_NAME="release-files"
 PLATFORM_TAG="[GitLab]"
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -29,11 +29,11 @@ CYAN='\033[0;36m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-log_info() { echo -e "${CYAN}${PLATFORM_TAG}[INFO]${NC} $*"; }
-log_success() { echo -e "${GREEN}${PLATFORM_TAG}[✓]${NC} $*"; }
-log_warning() { echo -e "${YELLOW}${PLATFORM_TAG}[!]${NC} $*"; }
-log_error() { echo -e "${RED}${PLATFORM_TAG}[✗]${NC} $*"; }
-log_debug() { echo -e "${BLUE}${PLATFORM_TAG}[DEBUG]${NC} $*"; }
+log_info() { echo -e "${CYAN}${PLATFORM_TAG}[INFO]${NC} $*" >&2; }
+log_success() { echo -e "${GREEN}${PLATFORM_TAG}[✓]${NC} $*" >&2; }
+log_warning() { echo -e "${YELLOW}${PLATFORM_TAG}[!]${NC} $*" >&2; }
+log_error() { echo -e "${RED}${PLATFORM_TAG}[✗]${NC} $*" >&2; }
+log_debug() { echo -e "${BLUE}${PLATFORM_TAG}[DEBUG]${NC} $*" >&2; }
 
 # URL 编码函数
 urlencode() {
@@ -75,15 +75,18 @@ api_delete() {
         "${API_BASE}${endpoint}"
 }
 
-# 上传文件到 Package Registry
+# 上传文件到 Package Registry（所有日志输出到 stderr）
 upload_to_package_registry() {
     local file="$1"
     local filename=$(basename "$file")
+    local filesize=$(du -h "$file" | cut -f1)
     
-    log_info "上传: $filename ($(du -h "$file" | cut -f1))"
+    log_info "上传: $filename ($filesize)"
     
     # 上传到 Generic Package Registry
     local upload_url="${API_BASE}/projects/${PROJECT_ID}/packages/generic/${PACKAGE_NAME}/${TAG_NAME}/${filename}"
+    
+    log_debug "  上传 URL: $upload_url"
     
     local response=$(curl -s -w "\n%{http_code}" \
         -H "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
@@ -100,8 +103,12 @@ upload_to_package_registry() {
         log_success "上传成功"
         log_debug "  下载链接: $download_url"
         
-        # 返回下载链接和文件名（JSON 格式）
-        echo "{\"name\":\"$filename\",\"url\":\"$download_url\"}"
+        # 只输出 JSON 到 stdout
+        jq -n \
+            --arg name "$filename" \
+            --arg url "$download_url" \
+            '{name: $name, url: $url}'
+        
         return 0
     else
         log_error "上传失败 (HTTP $http_code)"
@@ -112,7 +119,7 @@ upload_to_package_registry() {
 
 # 核心功能函数
 check_token() {
-    echo ""
+    echo "" >&2
     log_info "检查环境配置"
     
     if [ -z "$GITLAB_TOKEN" ]; then
@@ -131,7 +138,7 @@ check_token() {
 }
 
 ensure_repository() {
-    echo ""
+    echo "" >&2
     log_info "步骤 1/4: 检查仓库"
 
     local response=$(api_get "/projects/${PROJECT_PATH_ENCODED}")
@@ -221,7 +228,7 @@ EOF
 }
 
 cleanup_old_tags() {
-    echo ""
+    echo "" >&2
     log_info "步骤 2/4: 清理旧标签"
 
     local deleted_count=0
@@ -250,7 +257,7 @@ cleanup_old_tags() {
             continue
         fi
 
-        echo ""
+        echo "" >&2
         log_warning "清理: $tag"
 
         # 先删除 Release（如果存在）
@@ -260,6 +267,19 @@ cleanup_old_tags() {
             api_delete "/projects/${PROJECT_ID}/releases/${tag}" > /dev/null
             log_debug "  Release 已删除"
             sleep 0.5
+        fi
+
+        # 删除 Package（如果存在）
+        log_debug "  清理 Package..."
+        local packages_response=$(api_get "/projects/${PROJECT_ID}/packages?package_name=${PACKAGE_NAME}&package_version=${tag}")
+        local package_ids=$(echo "$packages_response" | jq -r '.[].id // empty')
+        
+        if [ -n "$package_ids" ]; then
+            while IFS= read -r pkg_id; do
+                [ -z "$pkg_id" ] && continue
+                api_delete "/projects/${PROJECT_ID}/packages/${pkg_id}" > /dev/null 2>&1
+                log_debug "  Package ID $pkg_id 已删除"
+            done <<< "$package_ids"
         fi
 
         # 删除标签
@@ -277,12 +297,12 @@ cleanup_old_tags() {
         sleep 1
     done <<< "$tags"
 
-    echo ""
+    echo "" >&2
     [ $deleted_count -gt 0 ] && log_success "已清理 $deleted_count 个旧版本" || log_info "没有需要清理的版本"
 }
 
 upload_files() {
-    echo ""
+    echo "" >&2
     log_info "步骤 3/4: 上传文件到 Package Registry"
     
     if [ -z "$UPLOAD_FILES" ]; then
@@ -308,23 +328,34 @@ upload_files() {
             continue
         fi
         
-        echo ""
+        echo "" >&2
         log_info "[$(( uploaded + failed + 1 ))/${total}] $(basename "$file")"
         
-        # 上传到 Package Registry
-        local result=$(upload_to_package_registry "$file")
+        # 上传到 Package Registry（输出到 stdout 的是 JSON）
+        local result=$(upload_to_package_registry "$file" 2>&1)
+        local exit_code=$?
         
-        if [ $? -eq 0 ] && [ -n "$result" ]; then
-            uploaded=$((uploaded + 1))
-            
-            # 添加到 assets.links 数组
-            ASSETS_LINKS=$(echo "$ASSETS_LINKS" | jq --argjson item "$result" '. += [$item | {name: .name, url: .url, link_type: "package"}]')
+        if [ $exit_code -eq 0 ] && [ -n "$result" ]; then
+            # 验证返回的是有效 JSON
+            if echo "$result" | jq empty 2>/dev/null; then
+                uploaded=$((uploaded + 1))
+                
+                log_debug "  解析结果: $result"
+                
+                # 添加到 assets.links 数组
+                ASSETS_LINKS=$(echo "$ASSETS_LINKS" | jq --argjson item "$result" \
+                    '. += [$item | {name: .name, url: .url, link_type: "package"}]')
+            else
+                log_error "  返回了无效的 JSON"
+                log_debug "  输出: $result"
+                failed=$((failed + 1))
+            fi
         else
             failed=$((failed + 1))
         fi
     done
     
-    echo ""
+    echo "" >&2
     
     if [ $uploaded -eq $total ]; then
         log_success "全部上传成功: $uploaded/$total"
@@ -336,7 +367,7 @@ upload_files() {
 }
 
 create_release() {
-    echo ""
+    echo "" >&2
     log_info "步骤 4/4: 创建 Release"
     log_info "标签: ${TAG_NAME}"
     log_info "标题: ${RELEASE_TITLE}"
@@ -365,8 +396,9 @@ create_release() {
                 
                 if echo "$response" | jq -e '.id' > /dev/null 2>&1; then
                     added=$((added + 1))
+                    log_success "  ✓ $name"
                 else
-                    log_warning "  添加失败: $name"
+                    log_warning "  ✗ $name"
                 fi
             done
             
@@ -417,7 +449,7 @@ create_release() {
         }')
     
     log_debug "Release Payload:"
-    log_debug "$(echo "$release_payload" | jq .)"
+    log_debug "$(echo "$release_payload" | jq -c .)"
     
     local release_response=$(api_post "/projects/${PROJECT_ID}/releases" "$release_payload")
     
@@ -434,7 +466,7 @@ create_release() {
 }
 
 verify_release() {
-    echo ""
+    echo "" >&2
     log_info "验证 Release"
     
     local response=$(api_get "/projects/${PROJECT_ID}/releases/${TAG_NAME}")
@@ -447,9 +479,9 @@ verify_release() {
         
         # 显示文件列表
         if [ "$assets" -gt 0 ]; then
-            echo ""
+            echo "" >&2
             log_info "文件列表:"
-            echo "$response" | jq -r '.assets.links[] | "  • \(.name)\n    \(.url)"'
+            echo "$response" | jq -r '.assets.links[] | "  • \(.name)\n    \(.url)"' >&2
         fi
     else
         log_error "验证失败"
@@ -458,7 +490,7 @@ verify_release() {
 }
 
 set_public_repo() {
-    echo ""
+    echo "" >&2
     log_info "修改仓库为公开"
 
     local update_payload=$(jq -n \
@@ -478,9 +510,9 @@ set_public_repo() {
 
 # 主函数
 main() {
-    echo "${PLATFORM_TAG} Release 发布脚本"
-    echo "仓库: ${REPO_PATH}"
-    echo "标签: ${TAG_NAME}"
+    echo "${PLATFORM_TAG} Release 发布脚本" >&2
+    echo "仓库: ${REPO_PATH}" >&2
+    echo "标签: ${TAG_NAME}" >&2
 
     check_token
     ensure_repository
@@ -493,10 +525,10 @@ main() {
     fi
 
     log_success "🎉 发布完成"
-    echo ""
-    echo "Release 地址:"
-    echo "  ${GITLAB_URL}/${REPO_PATH}/-/releases/${TAG_NAME}"
-    echo ""
+    echo "" >&2
+    echo "Release 地址:" >&2
+    echo "  ${GITLAB_URL}/${REPO_PATH}/-/releases/${TAG_NAME}" >&2
+    echo "" >&2
 }
 
 main "$@"
