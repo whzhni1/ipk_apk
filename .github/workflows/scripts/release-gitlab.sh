@@ -133,7 +133,7 @@ create_release_link() {
     local file_url="$1"
     local file_name="$2"
     
-    log_debug "关联文件: $file_name -> $file_url"
+    # log_debug "关联文件: $file_name -> $file_url"
     
     # 验证参数
     if [ -z "$file_url" ] || [ -z "$file_name" ]; then
@@ -150,13 +150,13 @@ create_release_link() {
             link_type: "package"
         }')
     
-    log_debug "Payload: $link_payload"
+    # log_debug "Payload: $link_payload"
     
     local response=$(api_post "/projects/${PROJECT_ID}/releases/${TAG_NAME}/assets/links" \
         "$link_payload")
     
     if echo "$response" | jq -e '.id' > /dev/null 2>&1; then
-        log_debug "关联成功: $file_name"
+        # log_debug "关联成功: $file_name"
         return 0
     else
         log_error "关联失败: $file_name"
@@ -446,7 +446,7 @@ upload_files() {
             local url=$(echo "$asset" | cut -d'|' -f1)
             local name=$(echo "$asset" | cut -d'|' -f2-)
             
-            log_debug "解析结果: URL='$url', Name='$name'"
+            # log_debug "解析结果: URL='$url', Name='$name'"
             
             if create_release_link "$url" "$name"; then
                 linked=$((linked + 1))
