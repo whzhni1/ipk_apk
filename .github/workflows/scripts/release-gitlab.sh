@@ -20,6 +20,7 @@ API_BASE="${GITLAB_URL}/api/v4"
 REPO_PATH="${USERNAME}/${REPO_NAME}"
 PROJECT_PATH_ENCODED=""
 PROJECT_ID=""
+PACKAGE_NAME="release-files"  # Generic Package 名称
 PLATFORM_TAG="[GitLab]"
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -74,93 +75,37 @@ api_delete() {
         "${API_BASE}${endpoint}"
 }
 
-# 上传文件到项目并返回完整 URL
-upload_file_to_project() {
-    local file="$1"
-    local filename=$(basename "$file")
-    
-    log_debug "上传文件到项目: $filename" >&2
-    
-    # 上传文件
-    local upload_response=$(curl -s -H "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
-        -F "file=@${file}" \
-        "${API_BASE}/projects/${PROJECT_ID}/uploads")
-    
-    # 提取相对 URL
-    local relative_url=$(echo "$upload_response" | jq -r '.url // empty')
-    
-    if [ -z "$relative_url" ] || [ "$relative_url" = "null" ]; then
-        log_error "文件上传失败: $filename" >&2
-        log_debug "响应: $upload_response" >&2
-        return 1
-    fi
-    
-    # 构造完整 URL
-    local full_url="${GITLAB_URL}/${REPO_PATH}${relative_url}"
-    
-    log_debug "文件 URL: $full_url" >&2
-    log_debug "文件名: $filename" >&2
-    
-    # 只输出结果到 stdout（格式：URL|文件名）
-    echo "${full_url}|${filename}"
-    return 0
-}
-
-# 文件上传到 Release
-upload_file_to_release() {
+# 上传文件到 Package Registry
+upload_to_package_registry() {
     local file="$1"
     local filename=$(basename "$file")
     
     log_info "上传: $filename ($(du -h "$file" | cut -f1))"
     
-    # 上传文件到项目并获取 URL
-    local result=$(upload_file_to_project "$file")
-    local exit_code=$?
+    # 上传到 Generic Package Registry
+    local upload_url="${API_BASE}/projects/${PROJECT_ID}/packages/generic/${PACKAGE_NAME}/${TAG_NAME}/${filename}"
     
-    if [ $exit_code -ne 0 ] || [ -z "$result" ]; then
-        log_error "上传失败"
-        return 1
-    fi
+    local response=$(curl -s -w "\n%{http_code}" \
+        -H "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+        --upload-file "$file" \
+        "$upload_url")
     
-    # 保存到数组供后续关联
-    RELEASE_ASSETS+=("$result")
-    log_success "上传成功"
-    return 0
-}
-
-# 创建 Release Link
-create_release_link() {
-    local file_url="$1"
-    local file_name="$2"
+    local http_code=$(echo "$response" | tail -n1)
+    local body=$(echo "$response" | sed '$d')
     
-    # log_debug "关联文件: $file_name -> $file_url"
-    
-    # 验证参数
-    if [ -z "$file_url" ] || [ -z "$file_name" ]; then
-        log_error "参数错误: URL='$file_url', Name='$file_name'"
-        return 1
-    fi
-    
-    local link_payload=$(jq -n \
-        --arg name "$file_name" \
-        --arg url "$file_url" \
-        '{
-            name: $name,
-            url: $url,
-            link_type: "package"
-        }')
-    
-    # log_debug "Payload: $link_payload"
-    
-    local response=$(api_post "/projects/${PROJECT_ID}/releases/${TAG_NAME}/assets/links" \
-        "$link_payload")
-    
-    if echo "$response" | jq -e '.id' > /dev/null 2>&1; then
-        # log_debug "关联成功: $file_name"
+    if [ "$http_code" = "201" ]; then
+        # 构造公开下载链接
+        local download_url="${API_BASE}/projects/${PROJECT_ID}/packages/generic/${PACKAGE_NAME}/${TAG_NAME}/${filename}"
+        
+        log_success "上传成功"
+        log_debug "  下载链接: $download_url"
+        
+        # 返回下载链接和文件名（JSON 格式）
+        echo "{\"name\":\"$filename\",\"url\":\"$download_url\"}"
         return 0
     else
-        log_error "关联失败: $file_name"
-        log_debug "响应: $response"
+        log_error "上传失败 (HTTP $http_code)"
+        log_debug "  响应: $body"
         return 1
     fi
 }
@@ -317,6 +262,7 @@ cleanup_old_tags() {
             sleep 0.5
         fi
 
+        # 删除标签
         log_debug "  删除标签..."
         local tag_encoded=$(urlencode "$tag")
         local http_code=$(api_delete "/projects/${PROJECT_ID}/repository/tags/${tag_encoded}")
@@ -335,9 +281,63 @@ cleanup_old_tags() {
     [ $deleted_count -gt 0 ] && log_success "已清理 $deleted_count 个旧版本" || log_info "没有需要清理的版本"
 }
 
+upload_files() {
+    echo ""
+    log_info "步骤 3/4: 上传文件到 Package Registry"
+    
+    if [ -z "$UPLOAD_FILES" ]; then
+        log_info "没有文件需要上传"
+        return 0
+    fi
+    
+    local uploaded=0
+    local failed=0
+    
+    # 用于存储 assets.links 的 JSON 数组
+    ASSETS_LINKS="[]"
+    
+    IFS=' ' read -ra FILES <<< "$UPLOAD_FILES"
+    local total=${#FILES[@]}
+    
+    for file in "${FILES[@]}"; do
+        [ -z "$file" ] && continue
+        
+        if [ ! -f "$file" ]; then
+            log_warning "文件不存在: $file"
+            failed=$((failed + 1))
+            continue
+        fi
+        
+        echo ""
+        log_info "[$(( uploaded + failed + 1 ))/${total}] $(basename "$file")"
+        
+        # 上传到 Package Registry
+        local result=$(upload_to_package_registry "$file")
+        
+        if [ $? -eq 0 ] && [ -n "$result" ]; then
+            uploaded=$((uploaded + 1))
+            
+            # 添加到 assets.links 数组
+            ASSETS_LINKS=$(echo "$ASSETS_LINKS" | jq --argjson item "$result" '. += [$item | {name: .name, url: .url, link_type: "package"}]')
+        else
+            failed=$((failed + 1))
+        fi
+    done
+    
+    echo ""
+    
+    if [ $uploaded -eq $total ]; then
+        log_success "全部上传成功: $uploaded/$total"
+    elif [ $uploaded -gt 0 ]; then
+        log_warning "部分上传成功: $uploaded/$total"
+    else
+        log_error "全部上传失败"
+    fi
+}
+
 create_release() {
     echo ""
-    log_info "步骤 3/4: 创建 Release"
+    log_info "步骤 4/4: 创建 Release"
     log_info "标签: ${TAG_NAME}"
     log_info "标题: ${RELEASE_TITLE}"
     
@@ -345,7 +345,34 @@ create_release() {
     local existing_release=$(api_get "/projects/${PROJECT_ID}/releases/${TAG_NAME}")
     
     if echo "$existing_release" | jq -e '.tag_name' > /dev/null 2>&1; then
-        log_warning "Release 已存在"
+        log_warning "Release 已存在，将更新..."
+        
+        # 如果有新文件，更新 Release
+        if [ "$ASSETS_LINKS" != "[]" ]; then
+            log_info "添加新的文件链接..."
+            
+            # 逐个添加文件链接
+            local count=$(echo "$ASSETS_LINKS" | jq 'length')
+            local added=0
+            
+            for ((i=0; i<$count; i++)); do
+                local link=$(echo "$ASSETS_LINKS" | jq -c ".[$i]")
+                local name=$(echo "$link" | jq -r '.name')
+                
+                log_debug "  添加: $name"
+                
+                local response=$(api_post "/projects/${PROJECT_ID}/releases/${TAG_NAME}/assets/links" "$link")
+                
+                if echo "$response" | jq -e '.id' > /dev/null 2>&1; then
+                    added=$((added + 1))
+                else
+                    log_warning "  添加失败: $name"
+                fi
+            done
+            
+            log_success "已添加 $added/$count 个文件"
+        fi
+        
         return 0
     fi
     
@@ -354,7 +381,7 @@ create_release() {
     local tag_check=$(api_get "/projects/${PROJECT_ID}/repository/tags/${tag_encoded}")
     
     if ! echo "$tag_check" | jq -e '.name' > /dev/null 2>&1; then
-
+        # 创建标签
         log_debug "创建标签..."
         local tag_payload=$(jq -n \
             --arg tag "$TAG_NAME" \
@@ -374,96 +401,35 @@ create_release() {
         log_debug "标签创建成功"
     fi
     
-    # 创建 Release
+    # 创建 Release（包含 assets.links）
     local release_payload=$(jq -n \
         --arg tag "$TAG_NAME" \
         --arg name "$RELEASE_TITLE" \
         --arg desc "$RELEASE_BODY" \
+        --argjson links "$ASSETS_LINKS" \
         '{
             tag_name: $tag,
             name: $name,
-            description: $desc
+            description: $desc,
+            assets: {
+                links: $links
+            }
         }')
+    
+    log_debug "Release Payload:"
+    log_debug "$(echo "$release_payload" | jq .)"
     
     local release_response=$(api_post "/projects/${PROJECT_ID}/releases" "$release_payload")
     
     if echo "$release_response" | jq -e '.tag_name' > /dev/null 2>&1; then
         log_success "Release 创建成功"
+        
+        local assets_count=$(echo "$release_response" | jq '.assets.links | length')
+        log_info "包含 $assets_count 个附件"
     else
         log_error "创建 Release 失败"
         log_debug "响应: $release_response"
         exit 1
-    fi
-}
-
-upload_files() {
-    echo ""
-    log_info "步骤 4/4: 上传文件到 Release"
-    
-    if [ -z "$UPLOAD_FILES" ]; then
-        log_info "没有文件需要上传"
-        return 0
-    fi
-    
-    # 初始化 assets 数组
-    RELEASE_ASSETS=()
-    
-    local uploaded=0
-    local failed=0
-    
-    IFS=' ' read -ra FILES <<< "$UPLOAD_FILES"
-    local total=${#FILES[@]}
-    
-    # 第一步：上传所有文件
-    log_info "上传文件到项目..."
-    for file in "${FILES[@]}"; do
-        [ -z "$file" ] && continue
-        
-        if [ ! -f "$file" ]; then
-            log_warning "文件不存在: $file"
-            failed=$((failed + 1))
-            continue
-        fi
-        
-        echo ""
-        log_info "[$(( uploaded + failed + 1 ))/${total}] $(basename "$file")"
-        
-        if upload_file_to_release "$file"; then
-            uploaded=$((uploaded + 1))
-        else
-            failed=$((failed + 1))
-        fi
-    done
-    
-    # 第二步：关联文件到 Release
-    if [ ${#RELEASE_ASSETS[@]} -gt 0 ]; then
-        echo ""
-        log_info "关联文件到 Release..."
-        
-        local linked=0
-        for asset in "${RELEASE_ASSETS[@]}"; do
-
-            local url=$(echo "$asset" | cut -d'|' -f1)
-            local name=$(echo "$asset" | cut -d'|' -f2-)
-            
-            # log_debug "解析结果: URL='$url', Name='$name'"
-            
-            if create_release_link "$url" "$name"; then
-                linked=$((linked + 1))
-            fi
-        done
-        
-        log_success "已关联 ${linked}/${#RELEASE_ASSETS[@]} 个文件"
-    fi
-    
-    echo ""
-    
-    if [ $uploaded -eq $total ]; then
-        log_success "全部上传成功: $uploaded/$total"
-    elif [ $uploaded -gt 0 ]; then
-        log_warning "部分上传成功: $uploaded/$total"
-    else
-        log_error "全部上传失败"
     fi
 }
 
@@ -478,6 +444,13 @@ verify_release() {
         
         local assets=$(echo "$response" | jq '.assets.links | length')
         log_info "附件数量: $assets"
+        
+        # 显示文件列表
+        if [ "$assets" -gt 0 ]; then
+            echo ""
+            log_info "文件列表:"
+            echo "$response" | jq -r '.assets.links[] | "  • \(.name)\n    \(.url)"'
+        fi
     else
         log_error "验证失败"
         exit 1
@@ -512,14 +485,15 @@ main() {
     check_token
     ensure_repository
     cleanup_old_tags
-    create_release
     upload_files
+    create_release
     verify_release
     if [ "$REPO_STATUS" != "0" ]; then
       set_public_repo
     fi
 
     log_success "🎉 发布完成"
+    echo ""
     echo "Release 地址:"
     echo "  ${GITLAB_URL}/${REPO_PATH}/-/releases/${TAG_NAME}"
     echo ""
