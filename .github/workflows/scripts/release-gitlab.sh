@@ -166,23 +166,6 @@ upload_files() {
 create_release() {
     log "步骤 4/4: 创建 Release (标签: $TAG_NAME)"
     
-    local existing=$(api GET "/projects/$PROJECT_ID/releases/$TAG_NAME")
-    if echo "$existing" | jq -e '.tag_name' >/dev/null 2>&1; then
-        warn "Release 已存在"
-        [ "$ASSETS_LINKS" = "[]" ] && return
-        
-        log "添加文件..."
-        local count=$(echo "$ASSETS_LINKS" | jq 'length')
-        local added=0
-        for ((i=0; i<count; i++)); do
-            local link=$(echo "$ASSETS_LINKS" | jq -c ".[$i]")
-            api POST "/projects/$PROJECT_ID/releases/$TAG_NAME/assets/links" "$link" >/dev/null && \
-                added=$((added + 1))
-        done
-        success "已添加 $added/$count 个文件"
-        return
-    fi
-    
     local tag_check=$(api GET "/projects/$PROJECT_ID/repository/tags/$(urlencode "$TAG_NAME")")
     if ! echo "$tag_check" | jq -e '.name' >/dev/null 2>&1; then
         local tag_payload=$(jq -n --arg t "$TAG_NAME" --arg r "$BRANCH" '{tag_name:$t, ref:$r}')
