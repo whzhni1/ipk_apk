@@ -50,9 +50,9 @@ ensure_repo() {
     local resp=$(api GET "/repos/$REPO_PATH")
     
     if echo "$resp" | jq -e '.id' >/dev/null 2>&1; then
-        local is_private=$(echo "$resp" | jq -r '.private')
-        success "仓库已存在 (私有: $is_private)"
-        [ "$is_private" = "false" ] && return 0 || return 1
+    local is_private=$(echo "$resp" | jq -r '.private')
+    success "仓库已存在 ($([ "$is_private" = "false" ] && echo "公开" || echo "私有"))"
+    [ "$is_private" = "false" ] && return 0 || return 1
     fi
     
     warn "仓库不存在，创建中..."
