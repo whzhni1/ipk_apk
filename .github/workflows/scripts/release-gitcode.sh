@@ -236,11 +236,12 @@ main() {
     
     check_env
     ensure_repo
+    set +e
     cleanup_tags
-    if [ $? -eq 2 ]; then
-        echo "Release: https://gitcode.com/$REPO_PATH/releases" >&2
-        exit 0
-    fi
+    status=$?
+    set -e
+    [ $status -eq 2 ] && exit 0
+
     create_release
     upload_files
     verify_release
