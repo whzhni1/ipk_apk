@@ -36,9 +36,9 @@ env:
   GITEE_REPO: test-release
   GITLAB_REPO: test-release
   
-  GITCODE_USERNAME: your-gitcode-username
-  GITEE_USERNAME: your-gitee-username
-  GITLAB_USERNAME: your-gitlab-username
+  GITCODE_USERNAME: whzhni
+  GITEE_USERNAME: whzhni
+  GITLAB_USERNAME: whzhni
   
   BRANCH: main
 
