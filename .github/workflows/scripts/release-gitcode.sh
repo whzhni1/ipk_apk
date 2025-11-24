@@ -145,9 +145,6 @@ cleanup_tags() {
 create_release() {
     log "步骤 3/4: 创建 Release (标签: $TAG_NAME)"
     
-    # 先删除已存在的
-    api DELETE "/repos/$REPO_PATH/releases/tags/$TAG_NAME" >/dev/null 2>&1 || true
-    
     local payload=$(jq -n --arg t "$TAG_NAME" --arg n "$RELEASE_TITLE" --arg b "$RELEASE_BODY" --arg br "$BRANCH" \
         '{tag_name:$t, name:$n, body:$b, target_commitish:$br}')
     
