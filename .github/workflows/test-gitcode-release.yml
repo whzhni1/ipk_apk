@@ -17,10 +17,10 @@ on:
         required: false
         type: choice
         options:
-          - 'github'
+          - 'gitcode'
           - 'gitee'
           - 'gitlab'
-        default: 'github'
+        default: 'gitcode'
       
       tag_name:
         description: 'Release 标签名'
@@ -34,10 +34,11 @@ on:
 
 env:
   # 平台配置
-  GITHUB_REPO: test-release
+  GITCODE_REPO: test-release
   GITEE_REPO: test-release
   GITLAB_REPO: test-release
   
+  GITCODE_USERNAME: your-gitcode-username
   GITEE_USERNAME: your-gitee-username
   GITLAB_USERNAME: your-gitlab-username
   
@@ -55,7 +56,7 @@ jobs:
           if [ "${{ github.event.inputs.test_mode }}" = "单个平台测试" ]; then
             echo "platforms=[\"${{ github.event.inputs.single_platform }}\"]" >> $GITHUB_OUTPUT
           else
-            echo "platforms=[\"github\",\"gitee\",\"gitlab\"]" >> $GITHUB_OUTPUT
+            echo "platforms=[\"gitcode\",\"gitee\",\"gitlab\"]" >> $GITHUB_OUTPUT
           fi
       
       - name: 显示测试配置
@@ -66,7 +67,7 @@ jobs:
           if [ "${{ github.event.inputs.test_mode }}" = "单个平台测试" ]; then
             echo "- **测试平台**: ${{ github.event.inputs.single_platform }}" >> $GITHUB_STEP_SUMMARY
           else
-            echo "- **测试平台**: GitHub, Gitee, GitLab" >> $GITHUB_STEP_SUMMARY
+            echo "- **测试平台**: GitCode, Gitee, GitLab" >> $GITHUB_STEP_SUMMARY
           fi
           echo "- **标签名称**: ${{ github.event.inputs.tag_name }}" >> $GITHUB_STEP_SUMMARY
           echo "- **标题**: ${{ github.event.inputs.release_title }}" >> $GITHUB_STEP_SUMMARY
@@ -92,19 +93,19 @@ jobs:
           echo "# 测试 Release 文件" > README.md
           echo "此文件用于测试 Release 上传功能" >> README.md
       
-      - name: 测试 GitHub Release
-        if: matrix.platform == 'github'
+      - name: 测试 GitCode Release
+        if: matrix.platform == 'gitcode'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          USERNAME: ${{ github.repository_owner }}
-          REPO_NAME: ${{ env.GITHUB_REPO }}
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          USERNAME: ${{ env.GITCODE_USERNAME }}
+          REPO_NAME: ${{ env.GITCODE_REPO }}
           TAG_NAME: ${{ github.event.inputs.tag_name }}
           RELEASE_TITLE: ${{ github.event.inputs.release_title }}
-          RELEASE_BODY: "GitHub 测试"
+          RELEASE_BODY: "GitCode 测试"
           UPLOAD_FILES: "build-time.txt version.txt README.md"
         run: |
-          chmod +x release-github.sh
-          ./release-github.sh
+          chmod +x release-gitcode.sh
+          ./release-gitcode.sh
       
       - name: 测试 Gitee Release
         if: matrix.platform == 'gitee'
