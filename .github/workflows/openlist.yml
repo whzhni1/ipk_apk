@@ -180,27 +180,36 @@ jobs:
           
           declare -A PIDS RESULTS
           
-          # GitCode
+           # GitCode
           [ -n "$GITCODE_TOKEN" ] && {
-            (GITCODE_TOKEN="$GITCODE_TOKEN" USERNAME="$GITCODE_USERNAME" \
+            (
+              export GITCODE_TOKEN="$GITCODE_TOKEN"
+              export USERNAME="$GITCODE_USERNAME"
               .github/workflows/scripts/release-gitcode.sh && \
-              echo "0" > /tmp/gitcode.status || echo "1" > /tmp/gitcode.status) &
+              echo "0" > /tmp/gitcode.status || echo "1" > /tmp/gitcode.status
+            ) &
             PIDS[gitcode]=$!
           }
           
           # Gitee
           [ -n "$GITEE_TOKEN" ] && {
-            (GITEE_TOKEN="$GITEE_TOKEN" USERNAME="$GITEE_USERNAME" \
+            (
+              export GITEE_TOKEN="$GITEE_TOKEN"
+              export USERNAME="$GITEE_USERNAME"
               .github/workflows/scripts/release-gitee.sh && \
-              echo "0" > /tmp/gitee.status || echo "1" > /tmp/gitee.status) &
+              echo "0" > /tmp/gitee.status || echo "1" > /tmp/gitee.status
+            ) &
             PIDS[gitee]=$!
           }
           
           # GitLab
           [ -n "$GITLAB_TOKEN" ] && {
-            (GITLAB_TOKEN="$GITLAB_TOKEN" USERNAME="$GITLAB_USERNAME" \
+            (
+              export GITLAB_TOKEN="$GITLAB_TOKEN"
+              export USERNAME="$GITLAB_USERNAME"
               .github/workflows/scripts/release-gitlab.sh && \
-              echo "0" > /tmp/gitlab.status || echo "1" > /tmp/gitlab.status) &
+              echo "0" > /tmp/gitlab.status || echo "1" > /tmp/gitlab.status
+            ) &
             PIDS[gitlab]=$!
           }
           
