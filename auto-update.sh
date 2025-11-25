@@ -37,15 +37,17 @@ load_config() {
 
 # 解析 Git 信息
 parse_git_info() {
-    local url="$1"
-    local normalized_url=$(echo "$url" | sed 's|raw\.gitcode|gitcode|')
+    local input="$1"
     
-    platform=$(echo "$normalized_url" | sed -n 's|.*://\([^.]*\)\..*|\1|p')
-    repo=$(echo "$normalized_url" | sed 's|.*://[^/]*/\([^/]*/[^/]*\)/.*|\1|')
-    branch=$(echo "$normalized_url" | sed 's|.*/raw/\([^/]*\)/.*|\1|')
-    owner=$(echo "$repo" | cut -d'/' -f1)
+    url="${input%%~*}"
+    token="${input#*~}"
+    [ "$token" = "$input" ] && token=""
+
+    local norm="${url/raw.gitcode/gitcode}"
+    platform=$(echo "$norm" | sed -n 's|.*://\([^.]*\)\..*|\1|p')
+    owner=$(echo "$norm" | sed -n 's|.*://[^/]*/\([^/]*\)/.*|\1|p')
     
-    log "解析URL: $url -> 平台:$platform 仓库:$repo 分支:$branch"
+    log "解析: $platform/$owner Token:${token:+有}${token:-无}"
 }
 
 # 工具函数
@@ -80,17 +82,15 @@ validate_file() {
 
 # API 调用
 api_get_release() {
-    local platform="$1" owner="$2" repo="$3"
-    local token=""
-    
-    case "$platform" in
-        gitee) token="$GITEE_TOKEN" ;;
-        gitcode) token="$GITCODE_TOKEN"; [ -z "$token" ] && return 1 ;;
-        *) return 1 ;;
-    esac
-    
-    local url="https://${platform}.com/api/v5/repos/${owner}/${repo}/releases"
-    [ -n "$token" ] && curl -s -H "Authorization: Bearer $token" "$url" || curl -s "$url"
+    local platform="$1" owner="$2" repo="$3" url header
+    [ "$platform" = "gitlab" ] && {
+        url="https://${platform}.com/api/v4/projects/${owner}%2F${repo}/releases"
+        header="PRIVATE-TOKEN: $token"
+    } || {
+        url="https://${platform}.com/api/v5/repos/${owner}/${repo}/releases"
+        header="Authorization: Bearer $token"
+    }
+    [ -n "$token" ] && curl -s -H "$header" "$url" || curl -s "$url"
 }
 
 # 查找并安装
@@ -344,7 +344,7 @@ check_script_update() {
     local tmp="/tmp/auto-update-new.sh"
 
     for url in $SCRIPT_URLS; do
-        local update_url=$(echo "$url" | sed 's/auto-setup$/auto-update.sh/')
+        local update_url=$(echo "$url" | sed 's/auto-setup.*/auto-update.sh/')
 
         curl -fsSL -o "$tmp" "$update_url" 2>/dev/null || continue
         grep -q "run_update" "$tmp" || { rm -f "$tmp"; continue; }
