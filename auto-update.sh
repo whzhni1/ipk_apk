@@ -42,12 +42,10 @@ parse_git_info() {
     url="${input%%~*}"
     token="${input#*~}"
     [ "$token" = "$input" ] && token=""
-
     local norm="${url/raw.gitcode/gitcode}"
+    norm="${norm/raw.githubusercontent.com/github.com}"
     platform=$(echo "$norm" | sed -n 's|.*://\([^.]*\)\..*|\1|p')
     owner=$(echo "$norm" | sed -n 's|.*://[^/]*/\([^/]*\)/.*|\1|p')
-    
-    log "解析: $platform/$owner Token:${token:+有}${token:-无}"
 }
 
 # 工具函数
@@ -83,13 +81,22 @@ validate_file() {
 # API 调用
 api_get_release() {
     local platform="$1" owner="$2" repo="$3" url header
-    [ "$platform" = "gitlab" ] && {
-        url="https://${platform}.com/api/v4/projects/${owner}%2F${repo}/releases"
-        header="PRIVATE-TOKEN: $token"
-    } || {
-        url="https://${platform}.com/api/v5/repos/${owner}/${repo}/releases"
-        header="Authorization: Bearer $token"
-    }
+    
+    case "$platform" in
+        gitlab)
+            url="https://gitlab.com/api/v4/projects/${owner}%2F${repo}/releases"
+            header="PRIVATE-TOKEN: $token"
+            ;;
+        github)
+            url="https://api.github.com/repos/${owner}/${repo}/releases"
+            header="Authorization: token $token"
+            ;;
+        *) # gitee gitcode
+            url="https://${platform}.com/api/v5/repos/${owner}/${repo}/releases"
+            header="Authorization: Bearer $token"
+            ;;
+    esac
+    
     [ -n "$token" ] && curl -s -H "$header" "$url" || curl -s "$url"
 }
 
@@ -161,27 +168,31 @@ process_package() {
 
     local app=$(echo "$pkg" | sed 's/^luci-app-//' | sed 's/^luci-theme-//')
     
-    for url in $SCRIPT_URLS; do
-        parse_git_info "$url"
-        log "  平台: $platform ($owner/$pkg)"
+    for src in $SCRIPT_URLS; do
+        parse_git_info "$src"
         
-        local json=$(api_get_release "$platform" "$owner" "$pkg")
-        echo "$json" | grep -q '\[' || { log "⚠ API调用失败"; continue; }
+        local authors="${AUTHORS:-$owner}"
         
-        local ver=$(echo "$json" | grep -o '"tag_name":"[^"]*"' | head -1 | cut -d'"' -f4)
-        [ -z "$ver" ] && { log "⚠ 无版本信息"; continue; }
-        log "  最新版本: $ver"
-        
-        if [ "$check_ver" = "1" ]; then
-            version_greater "$ver" "$cur_ver" || { log "  ○ 已是最新 ($cur_ver)"; return 2; }
-            log "  发现更新: $cur_ver → $ver"
-        fi
-        
-        echo "$json" | grep -q '"assets"' || { log "⚠ 无资源文件"; continue; }
+        for author in $authors; do
+            log "  尝试: $platform/$author/$pkg"
+            local json=$(api_get_release "$platform" "$author" "$pkg")
+            echo "$json" | grep -q '\[' || { log "  ⚠ 无效响应"; continue; }
+            
+            local ver=$(echo "$json" | grep -o '"tag_name":"[^"]*"' | head -1 | cut -d'"' -f4)
+            [ -z "$ver" ] && { log "  ⚠ 无版本信息"; continue; }
+            log "  最新版本: $ver"
+            
+            if [ "$check_ver" = "1" ]; then
+                version_greater "$ver" "$cur_ver" || { log "  ○ 已是最新 ($cur_ver)"; return 2; }
+                log "  发现更新: $cur_ver → $ver"
+            fi
+            
+            echo "$json" | grep -q '"assets"' || { log "  ⚠ 无资源文件"; continue; }
 
-        ASSETS_JSON_CACHE="$json"
-        find_and_install "$app" && { log "√ 安装成功"; return 0; }
-        log "✗ 无匹配文件"
+            ASSETS_JSON_CACHE="$json"
+            find_and_install "$app" && { log "√ 安装成功"; return 0; }
+            log "  ✗ 无匹配文件"
+        done
     done
     
     log "✗ 所有源均失败"
