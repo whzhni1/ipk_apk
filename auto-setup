@@ -359,7 +359,7 @@ remove_self() {
         log "未设置自动更新，清理所有相关文件"
         rm -f "$UPDATE_PATH" && log "  删除: $UPDATE_PATH"
         rm -f "/etc/auto-setup.conf" && log "  删除: 配置文件"
-
+    fi
     sleep 2
     
     local remain=""
@@ -374,7 +374,7 @@ remove_self() {
         sleep 10
         reboot
     }
-}
+｝
 
 # 主安装流程
 run_setup() {
