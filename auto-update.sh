@@ -446,11 +446,11 @@ run_update() {
     classify_packages || return 1
     
     [ "$INSTALL_PRIORITY" = "1" ] && {
-        update_official
-        update_thirdparty
-    } || {
         update_thirdparty
         update_official
+    else
+        update_official
+        update_thirdparty
     }
     
     log "√ 更新完成"
