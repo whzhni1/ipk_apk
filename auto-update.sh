@@ -376,36 +376,24 @@ check_script_update() {
 
 # 推送
 send_push() {
-    [ ! -f "/etc/config/wechatpush" ] && return
-    [ "$(uci get wechatpush.config.enable 2>/dev/null)" != "1" ] && return
-    
-    local token=$(uci get wechatpush.config.pushplus_token 2>/dev/null)
-    local api="pushplus" url="http://www.pushplus.plus/send"
-    
-    [ -z "$token" ] && {
-        token=$(uci get wechatpush.config.serverchan_3_key 2>/dev/null)
-        api="serverchan3" url="https://sctapi.ftqq.com/${token}.send"
-    }
-    
-    [ -z "$token" ] && {
-        token=$(uci get wechatpush.config.serverchan_key 2>/dev/null)
-        api="serverchan" url="https://sc.ftqq.com/${token}.send"
-    }
-    
-    [ -z "$token" ] && return
-    
-    log "发送推送 ($api)"
-    
-    case "$api" in
-        pushplus)
+    [ -z "$PUSH_TOKEN" ] && return 
+    local token="$PUSH_TOKEN" url
+    case "$token" in
+        SCU*)      url="https://sc.ftqq.com/${token}.send" ;;
+        sct*|SCT*) url="https://sctapi.ftqq.com/${token}.send" ;;
+        *)         url="http://www.pushplus.plus/send" ;;
+    esac
+    log "发送推送..."
+    case "$token" in
+        SCU*|sct*|SCT*)
+            curl -s -X POST "$url" -d "text=$1" -d "desp=$2" | \
+                grep -q '"errno":0\|"code":0' && log "√ 推送成功"
+            ;;
+        *)
             local c=$(echo "$2" | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
             curl -s -X POST "$url" -H "Content-Type: application/json" \
                 -d "{\"token\":\"$token\",\"title\":\"$1\",\"content\":\"$c\",\"template\":\"txt\"}" | \
                 grep -q '"code":200' && log "√ 推送成功"
-            ;;
-        *)
-            curl -s -X POST "$url" -d "text=$1" -d "desp=$2" | \
-                grep -q '"errno":0\|"code":0' && log "√ 推送成功"
             ;;
     esac
 }
