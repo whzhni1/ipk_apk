@@ -5,7 +5,7 @@ LOG_FILE="/tmp/auto-update.log"
 CONFIG_FILE="/etc/auto-setup.conf"
 DEVICE_MODEL="$(cat /tmp/sysinfo/model 2>/dev/null || echo '未知设备')"
 PUSH_TITLE="$DEVICE_MODEL 插件更新通知"
-EXCLUDE_PACKAGES="kernel kmod- base-files busybox lib opkg uclient-fetch ca-bundle ca-certificates luci-app-lucky luci-app-openlist2 luci-app-tailscale"
+DEFAULT_EXCLUDE="kernel kmod- base-files busybox lib opkg uclient-fetch ca-bundle ca-certificates luci-app-lucky luci-app-openlist2 luci-app-tailscale"
 
 # 批量初始化变量
 for var in ASSETS_JSON_CACHE INSTALLED_LIST OFFICIAL_PACKAGES NON_OFFICIAL_PACKAGES OFFICIAL_DETAIL THIRDPARTY_DETAIL; do
@@ -30,7 +30,7 @@ load_config() {
 
     [ -z "$SYS_ARCH" ] || [ -z "$PKG_INSTALL" ] || [ -z "$PKG_UPDATE" ] || \
     [ -z "$PKG_LIST_INSTALLED" ] || [ -z "$SCRIPT_URLS" ] && { log "✗ 缺少必需配置"; return 1; }
-    [ -n "$EXCLUDE_PACKAGES" ] && EXCLUDE_PACKAGES="$EXCLUDE_PACKAGES $EXCLUDE_PACKAGES"
+    EXCLUDE_LIST="$DEFAULT_EXCLUDE $EXCLUDE_PACKAGES"
     log "√ 配置已加载"
 }
 
@@ -245,7 +245,7 @@ run_install() {
 
 is_excluded() {
     case "$1" in luci-i18n-*) return 0 ;; esac
-    for p in $EXCLUDE_PACKAGES; do case "$1" in $p*) return 0 ;; esac; done
+    for p in $EXCLUDE_LIST; do case "$1" in $p*) return 0 ;; esac; done
     return 1
 }
 
@@ -270,10 +270,8 @@ install_lang() {
 
 # 分类包
 classify_packages() {
-    log "步骤: 分类已安装的包"
-    $PKG_UPDATE >>"$LOG_FILE" 2>&1 || { log "✗ 更新源失败"; return 1; }
-    log "√ 软件源已更新"
-    
+    $PKG_UPDATE >>"$LOG_FILE" 2>&1 && log "√ 软件源已更新" || log "⚠ 软件源更新失败"
+    log "🔍 正在识别包来源…"
     local all=$($PKG_LIST_INSTALLED 2>/dev/null | awk '{print $1}' | grep -v "^luci-i18n-")
     
     for pkg in $all; do
@@ -431,7 +429,7 @@ run_update() {
     log "OpenWrt 自动更新 v$SCRIPT_VERSION"
     
     load_config || return 1
-    log "架构: $SYS_ARCH | 包管理: $PKG_TYPE | 策略: $([ "$INSTALL_PRIORITY" = "1" ] && echo 官方优先 || echo 第三方优先)"
+    log "架构: $SYS_ARCH | 包管理: $PKG_TYPE | 策略: $([ "$INSTALL_PRIORITY" = "1" ] && echo 三方优先 || echo 官方优先)"
     
     check_script_update
     classify_packages || return 1
@@ -442,6 +440,7 @@ run_update() {
     } || {
         update_official
         update_thirdparty
+
     }
     
     log "√ 更新完成"
