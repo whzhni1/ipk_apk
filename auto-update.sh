@@ -356,7 +356,7 @@ check_script_update() {
     for url in $SCRIPT_URLS; do
         local update_url=$(echo "$url" | sed 's/auto-setup.*/auto-update.sh/')
 
-        curl -fsSL -o "$tmp" "$update_url" 2>/dev/null || continue
+        curl -fsSL --max-time 3 -o "$tmp" "$update_url" 2>/dev/null || continue
         grep -q "run_update" "$tmp" || { rm -f "$tmp"; continue; }
         
         local ver=$(sed -n 's/^SCRIPT_VERSION="\(.*\)"/\1/p' "$tmp" | head -1)
