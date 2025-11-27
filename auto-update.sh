@@ -189,7 +189,7 @@ process_package() {
             echo "$json" | grep -q '"assets"' || { log "  ⚠ 无资源文件"; continue; }
 
             ASSETS_JSON_CACHE="$json"
-            find_and_install "$app" && { log "√ 安装成功"; return 0; }
+            find_and_install "$app" && { log "√ $pkg 安装成功"; return 0; }
             log "  ✗ 无匹配文件"
         done
     done
