@@ -419,6 +419,9 @@ generate_report() {
     }
     
     REPORT="${REPORT}第三方:√ $THIRDPARTY_UPDATED ○ $THIRDPARTY_SAME ✗ $THIRDPARTY_FAILED${THIRDPARTY_DETAIL}\n"
+    [ "$mode" = "install" ] && [ "$INSTALL_PRIORITY" = "1" ] && [ "$THIRDPARTY_FAILED" -gt 0 ] && {
+        REPORT="${REPORT}⚠ 失败的包将由官方源继续安装\n"
+    }
     REPORT="${REPORT}⏰ 自动更新: $schedule\n\n详细日志: $LOG_FILE"
 }
 
