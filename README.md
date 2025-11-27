@@ -52,9 +52,9 @@
 # 自动插件部署脚本
 fetch_url="https://raw.githubusercontent.com/yourname/OpenWrt-AutoDeploy/main/install.sh"
 curl -fsSL --max-time 30 "$fetch_url" | sh
-```bash
+ ```
 
-2. 高级配置
+### 2. 高级配置
 创建引导配置文件 /etc/init.d/auto-setup-fetch：
 ```bash
 #!/bin/sh
@@ -119,7 +119,7 @@ chmod +x $FETCH
 $FETCH enable
 $FETCH start
 echo "[$(date '+%F %T')] ✓ 已启动"
-```bash
+ ```
 插件仓库 🗃️
 项目自动维护以下插件的多平台分发：
 
