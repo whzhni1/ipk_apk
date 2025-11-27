@@ -234,7 +234,7 @@ download_auto_update() {
     for url in $SCRIPT_URLS; do
         local update_url=$(echo "$url" | sed 's/auto-setup.*/auto-update.sh/')
         
-        curl -fsSL -o "$UPDATE_PATH" "$update_url" 2>/dev/null || {
+        curl -fsSL --max-time 5 -o "$UPDATE_PATH" "$update_url" 2>/dev/null || {
             log "  ✗ 下载失败: $update_url"
             rm -f "$UPDATE_PATH"
             continue
@@ -374,7 +374,7 @@ run_setup() {
     detect_package_manager || return 1
     init_arch
     save_all_config || return 1
-    
+    log "开始更新软件源…"
     $PKG_UPDATE >>"$LOG_FILE" 2>&1 && log "√ 软件源已更新" || log "⚠ 软件源更新失败"
     
     run_install
