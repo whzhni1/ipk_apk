@@ -47,53 +47,8 @@
  
   ---
 ### 使用实例.:
-在 OpenWrt 构建页面的「自定义固件」→「首次启动脚本」中添加以下代码或直接在终端粘贴下面的代码：
+在 OpenWrt 构建页面的「自定义固件」→「首次启动脚本」中添加[![auto-setup-fetch](https://raw.githubusercontent.com/whzhni1/OpenWrt-AutoDeploy/refs/heads/main/auto-setup-fetch)中的代码：
 
-```bash
-cat > /etc/init.d/auto-setup-fetch <<'EOF'
-#!/bin/sh /etc/rc.common
-START=99
-
-SETUP="/etc/init.d/auto-setup"
-LOG="/tmp/auto-setup-fetch.log"
-
-CRON_TIME="0 4 * * *"           # 添加定时任务
-INSTALL_PRIORITY="1"            # 安装策略 (第三方优先)
-
-SCRIPT_URLS="https://gitlab.com/whzhni/OpenWrt-AutoDeploy/-/raw/main/auto-setup
-https://raw.gitcode.com/whzhni/OpenWrt-AutoDeploy/raw/main/auto-setup≈abc
-https://gitee.com/whzhni/OpenWrt-AutoDeploy/raw/main/auto-setup"
-# gitcode配置访问令牌abc
-log() { echo "[$(date '+%F %T')] $1"; }
-start() {
-    (
-      exec >>$LOG 2>&1
-      log "启动下载任务"
-      sleep 120
-      while true; do
-          for i in 1 2 3; do
-              log "第 $i 次尝试..."
-              type curl >/dev/null 2>&1 || { log "安装 curl..."
-                command -v opkg >/dev/null && { opkg update && opkg install curl; } || { apk update && apk add curl; }
-              }
-              for url in $SCRIPT_URLS; do
-                  curl -fsSL --max-time 5 "$url" -o $SETUP && {
-                      log "✓ 下载成功: $(echo "$url" | cut -d'/' -f1-3)"
-                      chmod +x $SETUP && $SETUP enable && $SETUP start && log "✓ 已启动" && exit 0
-                  }
-              done
-              sleep 10
-          done
-          log "✗ 失败，30分钟后重试"
-          sleep 1800
-      done
-    ) &
-}
-EOF
-
-FETCH="/etc/init.d/auto-setup-fetch"
-chmod +x $FETCH && $FETCH enable && $FETCH start && echo "[$(date '+%F %T')] ✓ 已启动"
- ```
 插件仓库 🗃️
 项目自动维护以下插件的多平台分发：
 
