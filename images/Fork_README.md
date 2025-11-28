@@ -2,7 +2,7 @@
 ## Fork本项目后需要做些什么？
 
 ### 1. 修改工作流文件中的用户名
-修改 `.github/workflows/` 目录下的所有工作流文件，将 `whzhni` 替换为你自己的 GitHub 用户名。
+修改 `.github/workflows/` 目录下的所有工作流文件，将 `whzhni` 替换为你自己的 对应平台的 用户名。
 
 ### 2. 注意同步配置
 特别注意 `sync-upstream-releases.yml` 文件中的配置：
