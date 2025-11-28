@@ -1,6 +1,8 @@
 name: 构建 OpenList
 
 on:
+  schedule:
+    - cron: '0 17 * * *'
   workflow_dispatch:
     inputs:
       force_build:
