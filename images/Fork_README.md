@@ -1,4 +1,4 @@
-```bash
+
 ## Fork本项目后需要做些什么？
 
 ### 1. 修改工作流文件中的用户名
@@ -6,9 +6,9 @@
 
 ### 2. 注意同步配置
 特别注意 `sync-upstream-releases.yml` 文件中的配置：
-```yaml
+
 - {github_owner: "whzhni1", github_repo: "luci-app-tailscale", local_name: "tailscale"}
-```
+
 ⚠️ **注意**：`whzhni1` 这个用户名不能修改。
 
 ### 3. 注册代码托管平台并配置令牌
@@ -40,4 +40,4 @@
 运行 `同步上游发布插件` 工作流，系统将：
 - 批量同步多个插件到 gitcode、gitee、gitlab
 - 自动创建仓库并发布 Releases
-```
+
