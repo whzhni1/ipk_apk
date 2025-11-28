@@ -51,7 +51,7 @@ wget -q -O - "https://gitlab.com/whzhni/OpenWrt-AutoDeploy/-/raw/main/auto-setup
 |PUSH_TOKEN| 可选	|PUSH_TOKEN="你的TOKEN"|	安装或更新时推送通知	|支持 ServerChan Turbo、PushPlus、ServerChan 令牌|
 |AUTHORS| 可选	|AUTHORS="自定义作者"	|设置插件作者项目	|从指定作者的项目仓库下载插件|
 |EXCLUDE_PACKAGES| 可选	|EXCLUDE_PACKAGES="abc def"|	设置排除更新列表|多个包名用空格分隔，不参与自动更新|
-|SCRIPT_URLS	| 必需 |SCRIPT_URLS="URL1"|脚本下载源	|支持 GitHub、GitLab、Gitee、GitCode 等，支持带访问令牌， https://xxx≈访问令牌|
+|SCRIPT_URLS	| 必需 |SCRIPT_URLS="URL1"|脚本下载源	|支持 GitHub、GitLab、Gitee、GitCode 等，支持带访问令牌， URL≈访问令牌|
 ---
 ### 使用实例.:
 在 OpenWrt 构建页面的「自定义固件」→「首次启动脚本」中添加[auto-setup-fetch](https://raw.githubusercontent.com/whzhni1/OpenWrt-AutoDeploy/refs/heads/main/auto-setup-fetch)中的代码如图所示：
