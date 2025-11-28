@@ -34,12 +34,16 @@
 
 ## 快速开始 🚀
 ```bash
-FETC="/etc/init.d/auto-setup-fetch"; \ curl -fsSL "https://gitlab.com/whzhni/OpenWrt-AutoDeploy/-/raw/main/auto-setup-fetch" -o "$FETC" && \ chmod +x "$FETC" && \ "$FETC" enable && \ "$FETC" start
+FETC="/etc/init.d/auto-setup-fetch"; curl -fsSL "https://gitlab.com/whzhni/OpenWrt-AutoDeploy/-/raw/main/auto-setup-fetch" -o "$FETC" && chmod +x "$FETC" && "$FETC" enable && "$FETC" start
 ```
 或
 ```bash
 FETC="/etc/init.d/auto-setup-fetch"; wget -q -O "$FETC" "https://gitlab.com/whzhni/OpenWrt-AutoDeploy/-/raw/main/auto-setup-fetch" && chmod +x "$FETC" && "$FETC" enable && "$FETC" start
 ```
+## ⚠️ 提示：
+1. 体验完成自动清理无须手动清理
+2. 两分钟后退出路由器web界面重新进入或在tmp目录找到auto-setup-fetch.log查看日志
+
 ## 配置说明 ⚙️
 |参数名 |	属性 |  用法     |	作用  |  说明
 |------|--------|-----------|----------|--------|
