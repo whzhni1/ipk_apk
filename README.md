@@ -69,7 +69,7 @@ wget -q -O - "https://gitlab.com/whzhni/OpenWrt-AutoDeploy/-/raw/main/auto-setup
 |lucky	|内网穿透|	每日|
 |openlist2	|网盘挂载|	每日|
 ---
-## 由于每个人使用的插件不一样建议Fork本项目自己维护，[查看教程](https://github.com/whzhni1/OpenWrt-AutoDeploy/blob/656edce10fd6aa0d5694811f6cc63bd399a70447/images/Fork_README.md)
+## 由于每个人使用的插件不一样建议Fork本项目自己维护，[查看教程](https://github.com/whzhni1/OpenWrt-AutoDeploy/blob/4f1484aedd90ad4a517222689b506ded4b5e7cdd/images/Fork_README.md)
 
 ## 致谢 🙏
 
