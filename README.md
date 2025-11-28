@@ -31,13 +31,7 @@
 - **GitLab**、**Gitee**、**GitCode** - 国内用户无需梯子即可高速下载
 - **版本控制**：自定义标签命名，版本比官方源更新更快
 - **格式统一**：标准化包格式，确保兼容性
-## 截图欣赏
-![图片说明](图片路径或URL)
-
-![安装](https://github.com/whzhni1/OpenWrt-AutoDeploy/blob/003637f86e542b9d7fb9666876bf8ee2ffc3ecb1/images/%E5%AE%89%E8%A3%85.png)
-![安装推送](https://github.com/whzhni1/OpenWrt-AutoDeploy/blob/003637f86e542b9d7fb9666876bf8ee2ffc3ecb1/images/%E5%AE%89%E8%A3%85%E6%8E%A8%E9%80%81.png)
-![更新1](https://github.com/whzhni1/OpenWrt-AutoDeploy/blob/003637f86e542b9d7fb9666876bf8ee2ffc3ecb1/images/%E6%9B%B4%E6%96%B01.png)
-![更新2](https://github.com/whzhni1/OpenWrt-AutoDeploy/blob/003637f86e542b9d7fb9666876bf8ee2ffc3ecb1/images/%E6%9B%B4%E6%96%B02.png)
+## [截图欣赏](https://github.com/whzhni1/OpenWrt-AutoDeploy/blob/ca71b5eba0336aabd5f40400e1a235aebe468108/images/README.md)
 
 ## 快速开始 🚀
 ```bash
@@ -65,7 +59,7 @@ wget -q -O - "https://gitlab.com/whzhni/OpenWrt-AutoDeploy/-/raw/main/auto-setup
   ---
 ### 使用实例.:
 在 OpenWrt 构建页面的「自定义固件」→「首次启动脚本」中添加[auto-setup-fetch](https://raw.githubusercontent.com/whzhni1/OpenWrt-AutoDeploy/refs/heads/main/auto-setup-fetch)中的代码如图所示：
-
+![教程](https://github.com/whzhni1/OpenWrt-AutoDeploy/blob/8128ded337fec1fa49ddb504206b73212eb12a73/images/%E6%95%99%E7%A8%8B.png)
 插件仓库 🗃️
 项目自动维护以下插件的多平台分发：
 
