@@ -47,7 +47,7 @@
  
   ---
 ### 使用实例.:
-在 OpenWrt 构建页面的「自定义固件」→「首次启动脚本」中添加[![auto-setup-fetch](https://raw.githubusercontent.com/whzhni1/OpenWrt-AutoDeploy/refs/heads/main/auto-setup-fetch)中的代码：
+在 OpenWrt 构建页面的「自定义固件」→「首次启动脚本」中添加[auto-setup-fetch](https://raw.githubusercontent.com/whzhni1/OpenWrt-AutoDeploy/refs/heads/main/auto-setup-fetch)中的代码：
 
 插件仓库 🗃️
 项目自动维护以下插件的多平台分发：
