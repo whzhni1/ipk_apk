@@ -19,7 +19,7 @@
 - [gitcode](https://gitcode.com) 
 - [gitlab](https://gitlab.com)
 
-在创建令牌时，请勾选所有权限，然后复制令牌备用，- [创建令牌指南](https://github.com/whzhni1/OpenWrt-AutoDeploy/blob/50fc39b7a8e63ad5c024a12176b0a6c62ea10186/images/tokens_README.md)。
+在创建令牌时，请勾选所有权限，然后复制令牌备用，- [创建令牌指南](./images/tokens_README.md)。
 
 #### 3.2 配置 GitHub Secrets
 回到 GitHub 仓库，按以下步骤配置：
