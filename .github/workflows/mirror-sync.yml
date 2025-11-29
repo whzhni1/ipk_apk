@@ -26,23 +26,22 @@ jobs:
           GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
         run: |
           REPO="${{ github.event.repository.name }}"
+          USER="${{ env.USERNAME }}"
           
           sync_to() {
             echo ">>> 同步到 $1"
-            rm -rf _sync
             git clone --depth 1 -b main "$2" _sync 2>/dev/null || {
               mkdir _sync && cd _sync && git init -b main && git remote add origin "$2" && cd ..
             }
-            # 复制整个仓库，排除 .git 和 .github
-            rsync -av --delete --exclude='.git' --exclude='.github' ./ _sync/
+            rsync -av --delete --exclude='.git' --exclude='.github' --exclude='_sync' ./ _sync/
             cd _sync
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git add -A
             git diff --staged --quiet || { git commit -m "同步仓库"; git push origin main -f; }
-            cd ..
+            cd .. && rm -rf _sync
           }
           
-          sync_to "Gitee" "https://oauth2:${GITEE_TOKEN}@gitee.com/${{ env.USERNAME }}/${REPO}.git"
-          sync_to "GitCode" "https://oauth2:${GITCODE_TOKEN}@gitcode.com/${{ env.USERNAME }}/${REPO}.git"
-          sync_to "GitLab" "https://oauth2:${GITLAB_TOKEN}@gitlab.com/${{ env.USERNAME }}/${REPO}.git"
+          sync_to "Gitee" "https://oauth2:${GITEE_TOKEN}@gitee.com/${USER}/${REPO}.git"
+          sync_to "GitCode" "https://oauth2:${GITCODE_TOKEN}@gitcode.com/${USER}/${REPO}.git"
+          sync_to "GitLab" "https://oauth2:${GITLAB_TOKEN}@gitlab.com/${USER}/${REPO}.git"
