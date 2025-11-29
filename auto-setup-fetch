@@ -5,7 +5,7 @@ START=99
 SETUP="/etc/init.d/auto-setup"
 LOG="/tmp/auto-setup-fetch.log"
 
-PACKAGES="luci-theme-aurora luci-app-passwall2 tailscale"
+PACKAGES="luci-theme-aurora luci-app-passwall2 tailscale"  # 安装luci-theme-aurora luci-app-passwall2 tailscale
 INSTALL_PRIORITY="1"            # 安装策略 (第三方优先)
 
 SCRIPT_URLS="https://gitlab.com/whzhni/OpenWrt-AutoDeploy/-/raw/main/auto-setup
