@@ -23,9 +23,10 @@
 
 #### 3.2 配置 GitHub Secrets
 回到 GitHub 仓库，按以下步骤配置：
-1. 点击 `Settings` → `Secrets and variables` → `Actions`
-2. 点击 `New repository secret`
-3. 分别添加以下三个 secret：
+1. 点击 `Settings` →`Actions→General`→`Read and write permissions`→`Allow GitHub Actions to create and approve pull requests` →`Save`
+2. 点击`Secrets and variables` → `Actions`
+3. 点击 `New repository secret`
+4. 分别添加以下三个 secret：
    - **Name**: `GITCODE_TOKEN`，**Secret**: 你的 gitcode 访问令牌
    - **Name**: `GITEE_TOKEN`，**Secret**: 你的 gitee 访问令牌  
    - **Name**: `GITLAB_TOKEN`，**Secret**: 你的 gitlab 访问令牌
