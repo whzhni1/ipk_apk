@@ -5,21 +5,21 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'auto-update.sh'
+      - 'auto-setup'
+      - 'auto-setup-fetch'
 
 env:
-  GITEE_USERNAME: whzhni
-  GITCODE_USERNAME: whzhni
-  GITLAB_USERNAME: whzhni
-  
+  USERNAME: whzhni
+
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
 
-      - name: 同步文件
+      - name: 同步到镜像仓库
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
           GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
@@ -27,38 +27,22 @@ jobs:
         run: |
           REPO="${{ github.event.repository.name }}"
           
-          # 永远不同步的（目录或文件）
-          NEVER_SYNC='^\.github/'
-          # 不触发但会跟随同步的文件
-          NO_TRIGGER='^(version\.txt|README\.md|images/)'
-
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            FILES=$(find . -maxdepth 1 -type f ! -name '.*' -printf '%f ')
-          else
-            ALL=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
-            SYNC_FILES=$(echo "$ALL" | grep -vE "(${NEVER_SYNC}|/|^\.)" || true)
-            TRIGGER=$(echo "$SYNC_FILES" | grep -vE "$NO_TRIGGER" || true)
-            [ -z "$TRIGGER" ] && echo "无需同步" && exit 0
-            FILES="$SYNC_FILES"
-          fi
-          [ -z "$FILES" ] && echo "无文件需要同步" && exit 0
-          echo "仓库: $REPO | 文件: $FILES"
-          
           sync_to() {
             echo ">>> 同步到 $1"
             rm -rf _sync
             git clone --depth 1 -b main "$2" _sync 2>/dev/null || {
               mkdir _sync && cd _sync && git init -b main && git remote add origin "$2" && cd ..
             }
-            for f in $FILES; do [ -f "$f" ] && cp "$f" _sync/; done
+            # 复制整个仓库，排除 .git 和 .github
+            rsync -av --delete --exclude='.git' --exclude='.github' ./ _sync/
             cd _sync
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add .
-            git diff --staged --quiet || { git commit -m "同步: $FILES"; git push origin main -f; }
+            git add -A
+            git diff --staged --quiet || { git commit -m "同步仓库"; git push origin main -f; }
             cd ..
           }
           
-          sync_to "Gitee"   "https://oauth2:${GITEE_TOKEN}@gitee.com/${{ env.GITEE_USERNAME }}/${REPO}.git"
-          sync_to "GitCode" "https://oauth2:${GITCODE_TOKEN}@gitcode.com/${{ env.GITCODE_USERNAME }}/${REPO}.git"
-          sync_to "GitLab"  "https://oauth2:${GITLAB_TOKEN}@gitlab.com/${{ env.GITLAB_USERNAME }}/${REPO}.git"
+          sync_to "Gitee" "https://oauth2:${GITEE_TOKEN}@gitee.com/${{ env.USERNAME }}/${REPO}.git"
+          sync_to "GitCode" "https://oauth2:${GITCODE_TOKEN}@gitcode.com/${{ env.USERNAME }}/${REPO}.git"
+          sync_to "GitLab" "https://oauth2:${GITLAB_TOKEN}@gitlab.com/${{ env.USERNAME }}/${REPO}.git"
