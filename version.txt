@@ -5,4 +5,4 @@ luci-app-passwall2/v25.11.18-1
 luci-theme-aurora/v0.8.0_beta
 lucky/v2.19.5
 openlist2/v4.1.8
-tailscale/v1.90.8
+tailscale/v1.90.9
