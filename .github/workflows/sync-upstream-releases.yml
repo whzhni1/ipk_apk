@@ -19,7 +19,7 @@ jobs:
         include:
           - {github_owner: "vernesong", github_repo: "OpenClash", local_name: "luci-app-openclash"}
           - {github_owner: "whzhni1", github_repo: "luci-app-tailscale", local_name: "tailscale"}
-          - {github_owner: "gdy666", github_repo: "luci-app-lucky", local_name: "lucky", filter_include: "luci-app-*:1 luci-i18n-*:1 *{VERSION}*wanji*"}
+          - {github_owner: "whzhni1", github_repo: "luci-app-lucky", local_name: "lucky"}
           - {github_owner: "eamonxg", github_repo: "luci-theme-aurora"}
           - {github_owner: "xiaorouji", github_repo: "openwrt-passwall", local_name: "luci-app-passwall", filter_exclude: "luci-19.07* *.zip"}
           - {github_owner: "xiaorouji", github_repo: "openwrt-passwall2", local_name: "luci-app-passwall2", filter_exclude: "luci-19.07* *.zip"}
